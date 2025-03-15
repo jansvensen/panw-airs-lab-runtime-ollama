@@ -1,0 +1,14 @@
+# config.yaml
+server:
+  host: "0.0.0.0"
+  port: 11435  # Same port as Ollama uses by default
+
+ollama:
+  base_url: "http://localhost:11434"  # Actual Ollama instance on different port
+
+security:
+  base_url: "https://service.api.aisecurity.paloaltonetworks.com"
+  api_key: "YOUR_TOKEN_PANW_AI_RUNTIME_API"
+  profile_name: "PROFILE_NAME"
+  app_name: "panw-api-ollama"
+  app_user: "unknow"
