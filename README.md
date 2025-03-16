@@ -1,6 +1,6 @@
 # panw-api-ollama
 
-![file](https://github.com/user-attachments/assets/6e1fbfbf-1e1f-44a2-9212-0b967e7391b9)
+![file](https://github.com/user-attachments/assets/b54e6622-97e7-4ef8-8cd7-09dd2c5d89f3)
 
 Enhance your Ollama deployment with enterprise-grade AI security using Palo Alto Networks AI Runtime Security.
 
