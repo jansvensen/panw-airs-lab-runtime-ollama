@@ -2,6 +2,7 @@
 server:
   host: "0.0.0.0"
   port: 11435  # Same port as Ollama uses by default
+  debug_level: "ERROR"
 
 ollama:
   base_url: "http://localhost:11434"  # Actual Ollama instance on different port

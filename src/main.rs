@@ -140,17 +140,28 @@ impl AppStateBuilder {
 // - Other I/O errors occur during server startup
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize logging
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::WARN)
-        .init();
-    info!("Starting panw-api-ollama server");
-
     // Load configuration
     let config = config::load_config("config.yaml").map_err(|e| {
         eprintln!("Failed to load configuration: {}", e);
         e
     })?;
+
+    // Parse the debug level from config
+    let debug_level = tracing::Level::from_str(&config.server.debug_level).unwrap_or_else(|_| {
+        eprintln!(
+            "Unknown debug level: {}, defaulting to ERROR",
+            config.server.debug_level
+        );
+        tracing::Level::ERROR
+    });
+
+    // Initialize logging with the configured level
+    tracing_subscriber::fmt().with_max_level(debug_level).init();
+
+    info!(
+        "Starting panw-api-ollama server with log level: {}",
+        debug_level
+    );
 
     // Create application state
     let state = AppState {
