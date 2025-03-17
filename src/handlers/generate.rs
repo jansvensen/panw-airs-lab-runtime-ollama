@@ -15,8 +15,11 @@ impl SecurityAssessable for crate::types::GenerateResponse {
 
 pub async fn handle_generate(
     State(state): State<AppState>,
-    Json(request): Json<GenerateRequest>,
+    Json(mut request): Json<GenerateRequest>,
 ) -> Result<Response, ApiError> {
+
+    request.stream = Some(false);
+
     debug!("Received generate request for model: {}", request.model);
 
     let assessment = state
