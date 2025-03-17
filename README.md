@@ -84,6 +84,12 @@ panw-api-ollama acts as a transparent proxy:
 
 All this happens with minimal latency impact while providing maximum security.
 
+## Important Note on Response Assessment
+
+| Important Notice | Image |
+|-----------------|-------|
+| For optimal security analysis, it's recommended to **disable streaming** in OpenWebUI when using this proxy. When responses are streamed word-by-word, the security system cannot effectively assess the complete context, potentially missing security concerns in fragmented responses.<br><br>To disable streaming:<br>1. Go to chat settings in OpenWebUI<br>2. Find the `Stream Chat Response` option<br>3. Set it to "off"<br><br>The next version will include built-in controls for streaming, but for now, please configure OpenWebUI to deliver complete responses rather than streams for comprehensive security assessment. | ![file](https://github.com/user-attachments/assets/aef82df4-e58d-4804-bf1b-5a0c9e6d2ff5) |
+
 ## Resources
 
 - [Product Information](https://www.paloaltonetworks.com/network-security/ai-runtime-security)
