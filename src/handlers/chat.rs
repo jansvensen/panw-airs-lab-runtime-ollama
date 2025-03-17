@@ -15,8 +15,11 @@ impl SecurityAssessable for crate::types::ChatResponse {
 
 pub async fn handle_chat(
     State(state): State<AppState>,
-    Json(request): Json<ChatRequest>,
+    Json(mut request): Json<ChatRequest>,
 ) -> Result<Response, ApiError> {
+
+    request.stream = Some(false);
+
     debug!("Received chat request for model: {}", request.model);
 
     for message in &request.messages {
