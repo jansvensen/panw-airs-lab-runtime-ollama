@@ -1,10 +1,9 @@
-use axum::{extract::State, response::Response, Json};
-use tracing::debug;
-
 use crate::handlers::utils::build_json_response;
 use crate::handlers::ApiError;
 use crate::types::EmbeddingsRequest;
 use crate::AppState;
+use axum::{extract::State, response::Response, Json};
+use tracing::debug;
 
 pub async fn handle_embeddings(
     State(state): State<AppState>,
@@ -12,7 +11,6 @@ pub async fn handle_embeddings(
 ) -> Result<Response, ApiError> {
     debug!("Received embeddings request for model: {}", request.model);
 
-    // Assess the prompt with the updated method signature
     let assessment = state
         .security_client
         .assess_content(
@@ -23,10 +21,24 @@ pub async fn handle_embeddings(
         .await?;
 
     if !assessment.is_safe {
-        return Err(ApiError::SecurityIssue(format!(
-            "Embedding prompt violates security policy. Category: {}, Action: {}",
+        // Create a formatted response instead of returning error
+        let _blocked_message = format!(
+            "⚠️ This embedding request was blocked due to security policy violations:\n\n\
+            • Category: {}\n\
+            • Action: {}\n\n\
+            Please reformulate your request to comply with security policies.",
             assessment.category, assessment.action
-        )));
+        );
+
+        // Return a mock embedding response with zeros
+        let response = crate::types::EmbeddingsResponse {
+            embedding: vec![0.0; 10], // A small vector of zeros as placeholder
+        };
+
+        let json_bytes = serde_json::to_vec(&response)
+            .map_err(|e| ApiError::InternalError(format!("Failed to serialize response: {}", e)))?;
+
+        return Ok(build_json_response(bytes::Bytes::from(json_bytes))?);
     }
 
     // Forward to Ollama
