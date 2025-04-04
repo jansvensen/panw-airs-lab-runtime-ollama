@@ -17,7 +17,7 @@ pub struct ModelRequest {
     pub stream: Option<bool>,
 }
 
-/// Represents the available Ollama API endpoints.
+// Represents the available Ollama API endpoints.
 pub enum OllamaEndpoint {
     Tags,
     Show,
@@ -29,7 +29,7 @@ pub enum OllamaEndpoint {
 }
 
 impl OllamaEndpoint {
-    /// Returns the API path for the endpoint.
+    // Returns the API path for the endpoint.
     fn path(&self) -> &'static str {
         match self {
             Self::Tags => "/api/tags",
@@ -42,7 +42,7 @@ impl OllamaEndpoint {
         }
     }
 
-    /// Returns the HTTP method for the endpoint.
+    // Returns the HTTP method for the endpoint.
     fn method(&self) -> Method {
         match self {
             Self::Tags => Method::GET,
@@ -50,7 +50,7 @@ impl OllamaEndpoint {
         }
     }
 
-    /// Returns the appropriate log message prefix for the endpoint.
+    // Returns the appropriate log message prefix for the endpoint.
     fn log_prefix(&self) -> &'static str {
         match self {
             Self::Tags => "Forwarding list models request",
@@ -63,13 +63,13 @@ impl OllamaEndpoint {
         }
     }
 
-    /// Determines if this endpoint should include model name in logs.
+    // Determines if this endpoint should include model name in logs.
     fn includes_model_name_in_logs(&self) -> bool {
         matches!(self, Self::Show | Self::Delete | Self::Pull | Self::Push)
     }
 }
 
-/// Forwards a request to the Ollama service.
+// Forwards a request to the Ollama service.
 async fn forward_to_ollama<T: Serialize>(
     state: &AppState,
     endpoint: OllamaEndpoint,
@@ -108,12 +108,12 @@ async fn forward_to_ollama<T: Serialize>(
 
     Ok(build_json_response(body_bytes)?)
 }
-/// Handler for listing models (GET /api/tags)
+// Handler for listing models (GET /api/tags)
 pub async fn handle_list_models(State(state): State<AppState>) -> Result<Response, ApiError> {
     forward_to_ollama::<()>(&state, OllamaEndpoint::Tags, None, None).await
 }
 
-/// Handler for showing model details (POST /api/show)
+// Handler for showing model details (POST /api/show)
 pub async fn handle_show_model(
     State(state): State<AppState>,
     Json(request): Json<ModelRequest>,
@@ -127,7 +127,7 @@ pub async fn handle_show_model(
     .await
 }
 
-/// Handler for creating a model (POST /api/create)
+// Handler for creating a model (POST /api/create)
 pub async fn handle_create_model(
     State(state): State<AppState>,
     Json(request): Json<Value>,
@@ -135,7 +135,7 @@ pub async fn handle_create_model(
     forward_to_ollama(&state, OllamaEndpoint::Create, Some(&request), None).await
 }
 
-/// Handler for copying a model (POST /api/copy)
+// Handler for copying a model (POST /api/copy)
 pub async fn handle_copy_model(
     State(state): State<AppState>,
     Json(request): Json<Value>,
@@ -143,7 +143,7 @@ pub async fn handle_copy_model(
     forward_to_ollama(&state, OllamaEndpoint::Copy, Some(&request), None).await
 }
 
-/// Handler for deleting a model (POST /api/delete)
+// Handler for deleting a model (POST /api/delete)
 pub async fn handle_delete_model(
     State(state): State<AppState>,
     Json(request): Json<ModelRequest>,
@@ -157,7 +157,7 @@ pub async fn handle_delete_model(
     .await
 }
 
-/// Handler for pulling a model (POST /api/pull)
+// Handler for pulling a model (POST /api/pull)
 pub async fn handle_pull_model(
     State(state): State<AppState>,
     Json(request): Json<ModelRequest>,
@@ -171,7 +171,7 @@ pub async fn handle_pull_model(
     .await
 }
 
-/// Handler for pushing a model (POST /api/push)
+// Handler for pushing a model (POST /api/push)
 pub async fn handle_push_model(
     State(state): State<AppState>,
     Json(request): Json<ModelRequest>,

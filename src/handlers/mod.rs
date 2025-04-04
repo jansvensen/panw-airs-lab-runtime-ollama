@@ -11,12 +11,11 @@ use axum::{
     Json,
 };
 use serde_json::json;
-use tracing::{error, info};
+use tracing::error;
 
 pub enum ApiError {
     OllamaError(crate::ollama::OllamaError),
     SecurityError(crate::security::SecurityError),
-    SecurityIssue(String),
     InternalError(String),
 }
 
@@ -33,10 +32,6 @@ impl IntoResponse for ApiError {
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("Security error: {}", err),
                 )
-            }
-            ApiError::SecurityIssue(msg) => {
-                info!("Security issue detected: {}", msg);
-                (StatusCode::FORBIDDEN, format!("Security issue: {}", msg))
             }
             ApiError::InternalError(msg) => {
                 error!("Internal error: {}", msg);

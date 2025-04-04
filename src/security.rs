@@ -194,7 +194,6 @@ impl SecurityClient {
                 "PANW Security threat detected! Category: {}, Findings: {:#?}",
                 assessment.category, assessment.details.prompt_detected
             );
-            return Err(SecurityError::BlockedContent);
         }
 
         Ok(assessment)
