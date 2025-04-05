@@ -258,13 +258,12 @@ impl SecurityClient {
     // * `Err(SecurityError)` - If content is blocked by PANW security policy
     fn process_scan_result(&self, scan_result: ScanResponse) -> Result<Assessment, SecurityError> {
         let assessment = Assessment {
-            is_safe: scan_result.category == "benign",
+            is_safe: scan_result.category == "benign" && scan_result.action != "block",
             category: scan_result.category.clone(),
             action: scan_result.action.clone(),
             details: scan_result,
         };
-
-        if assessment.action == "block" {
+        if !assessment.is_safe {
             warn!(
                 "PANW Security threat detected! Category: {}, Findings: {:#?}",
                 assessment.category, assessment.details.prompt_detected
