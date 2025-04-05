@@ -1,7 +1,7 @@
 use crate::types::{AiProfile, Content, Metadata, ScanRequest, ScanResponse};
 use reqwest::Client;
 use thiserror::Error;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 // Represents errors that can occur during security assessments with the PANW AI Runtime API.
@@ -80,23 +80,32 @@ impl Content {
     //
     // * `prompt` - Optional text representing a prompt to an AI model
     // * `response` - Optional text representing a response from an AI model
+    // * `code_prompt`: Extracted code from prompt
+    // * `code_response`: Extracted code from response
     //
     // # Returns
     //
     // * `Ok(Self)` - A valid Content object with at least one field populated
     // * `Err` - An error if both fields are None
-    //
-    // # Examples
-    //
-    // ```
-    // // Create Content with a prompt for PANW assessment
-    // let prompt_content = Content::new(Some("What is Rust?".to_string()), None)?;
-    // ```
-    pub fn new(prompt: Option<String>, response: Option<String>) -> Result<Self, &'static str> {
-        if prompt.is_none() && response.is_none() {
-            return Err("Content must have at least a prompt or a response");
+    pub fn new(
+        prompt: Option<String>,
+        response: Option<String>,
+        code_prompt: Option<String>,
+        code_response: Option<String>,
+    ) -> Result<Self, &'static str> {
+        if prompt.is_none()
+            && response.is_none()
+            && code_prompt.is_none()
+            && code_response.is_none()
+        {
+            return Err("Content must have at least one field populated");
         }
-        Ok(Self { prompt, response })
+        Ok(Self {
+            prompt,
+            response,
+            code_prompt,
+            code_response,
+        })
     }
 }
 
@@ -151,6 +160,52 @@ impl SecurityClient {
         }
     }
 
+    // Extracts code blocks from text using simple Markdown parsing
+    //
+    // # Parameters
+    // * `content`: Input text containing potential code blocks
+    //
+    // # Returns
+    // String containing concatenated code blocks without Markdown syntax
+    //
+    // # Notes
+    // * Uses line-by-line parsing rather than full Markdown AST
+    // * Handles nested code blocks sequentially
+    // * Trims whitespace from code blocks
+    fn extract_code_blocks(&self, content: &str) -> String {
+        let mut code_content = String::new();
+
+        // Simple regex-free parsing of code blocks
+        let mut in_code_block = false;
+        let mut buffer = String::new();
+
+        for line in content.lines() {
+            if line.trim().starts_with("```") {
+                if in_code_block {
+                    // End of code block
+                    code_content.push_str(&buffer);
+                    code_content.push('\n');
+                    buffer.clear();
+                    in_code_block = false;
+                } else {
+                    // Start of code block
+                    in_code_block = true;
+                }
+            } else if in_code_block {
+                buffer.push_str(line);
+                buffer.push('\n');
+            }
+        }
+
+        // Append any remaining buffer if the input ends with an open code block
+        if in_code_block {
+            code_content.push_str(&buffer);
+            code_content.push('\n');
+        }
+
+        code_content
+    }
+
     // Prepares a Content object for PANW assessment based on the provided text.
     //
     // # Arguments
@@ -162,11 +217,37 @@ impl SecurityClient {
     //
     // * `Ok(Content)` - A properly configured Content object
     // * `Err(SecurityError)` - If content object creation fails
+    //
+    // # Process Flow
+    // 1. Extract code blocks using simple Markdown parser
+    // 2. Create Content struct with original + code fields
+    // 3. Validate content structure
     fn prepare_content(&self, content: &str, is_prompt: bool) -> Result<Content, SecurityError> {
+        // Extract any code blocks
+        let code_blocks = self.extract_code_blocks(content);
+
         if is_prompt {
-            Content::new(Some(content.to_string()), None)
+            Content::new(
+                Some(content.to_string()),
+                None,
+                if !code_blocks.is_empty() {
+                    Some(code_blocks)
+                } else {
+                    None
+                },
+                None,
+            )
         } else {
-            Content::new(None, Some(content.to_string()))
+            Content::new(
+                None,
+                Some(content.to_string()),
+                None,
+                if !code_blocks.is_empty() {
+                    Some(code_blocks)
+                } else {
+                    None
+                },
+            )
         }
         .map_err(|e| SecurityError::AssessmentError(e.to_string()))
     }
@@ -183,13 +264,12 @@ impl SecurityClient {
     // * `Err(SecurityError)` - If content is blocked by PANW security policy
     fn process_scan_result(&self, scan_result: ScanResponse) -> Result<Assessment, SecurityError> {
         let assessment = Assessment {
-            is_safe: scan_result.category == "benign",
+            is_safe: scan_result.category == "benign" && scan_result.action != "block",
             category: scan_result.category.clone(),
             action: scan_result.action.clone(),
             details: scan_result,
         };
-
-        if assessment.action == "block" {
+        if !assessment.is_safe {
             warn!(
                 "PANW Security threat detected! Category: {}, Findings: {:#?}",
                 assessment.category, assessment.details.prompt_detected
@@ -238,6 +318,8 @@ impl SecurityClient {
 
         // Create the content object
         let content_obj = self.prepare_content(content, is_prompt)?;
+
+        info!("Prepared content for PANW assessment: {:#?}", content_obj);
 
         // Create and send the request payload
         let payload = self.create_scan_request(content_obj, model_name);
