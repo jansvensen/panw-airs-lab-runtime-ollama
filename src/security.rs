@@ -2,6 +2,36 @@
 //
 // This module provides integration with Palo Alto Networks' AI Runtime security API
 // to assess and filter content for security threats and policy violations.
+//
+// # Overview
+//
+// The security module implements:
+// - Content assessment for both prompts and responses
+// - Code block extraction and analysis
+// - Integration with PANW AI Runtime security services
+// - Policy-based content filtering
+//
+// # Usage
+//
+// ```rust
+// let security_client = SecurityClient::new(
+//     "https://api.paloaltonetworks.com",
+//     "your-api-key",
+//     "default-profile",
+//     "my-app",
+//     "user-123"
+// );
+//
+// let assessment = security_client.assess_content(
+//     "Content to analyze",
+//     "llama3",
+//     true
+// ).await?;
+//
+// if !assessment.is_safe {
+//     // Handle unsafe content
+// }
+// ```
 use crate::types::{AiProfile, Content, Metadata, ScanRequest, ScanResponse};
 use reqwest::Client;
 use thiserror::Error;

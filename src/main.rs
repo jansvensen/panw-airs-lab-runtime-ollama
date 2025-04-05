@@ -2,8 +2,26 @@
 //
 // This service wraps the Ollama API and provides content security scanning using
 // Palo Alto Networks' AI Runtime API before forwarding requests to Ollama.
+//
+// # Overview
+//
+// This application serves as a security proxy for the Ollama API, scanning both
+// prompts sent to language models and responses from them for security threats,
+// policy violations, and potentially harmful content using Palo Alto Networks'
+// AI Runtime security services.
+//
+// # Architecture
+//
+// - Configuration: Loaded from a YAML file at startup
+// - Security: Integration with PANW AI Runtime API
+// - Proxying: Transparent forwarding to Ollama API
+// - Handlers: Endpoint-specific request processors
+// - Streaming: Support for both streaming and non-streaming responses
 
-// Module declarations with descriptive comments
+//------------------------------------------------------------------------------
+// Module declarations
+//------------------------------------------------------------------------------
+
 // Configuration loading and management.
 mod config;
 // HTTP request handlers for API endpoints.
@@ -17,7 +35,10 @@ mod stream;
 // Common type definitions used throughout the application.
 mod types;
 
-// Import declarations with logical grouping
+//------------------------------------------------------------------------------
+// Import declarations
+//------------------------------------------------------------------------------
+
 // Internal crate imports
 use crate::handlers::*;
 use crate::ollama::OllamaClient;
@@ -37,6 +58,10 @@ use std::str::FromStr;
 use tower_http::trace::TraceLayer;
 use tracing::{error, info};
 
+//------------------------------------------------------------------------------
+// Application State
+//------------------------------------------------------------------------------
+
 // Shared application state containing clients for external services.
 //
 // This state is cloned and passed to each request handler, providing
@@ -44,9 +69,9 @@ use tracing::{error, info};
 #[derive(Clone)]
 pub struct AppState {
     // Client for communicating with Ollama API
-    ollama_client: OllamaClient,
+    pub(crate) ollama_client: OllamaClient,
     // Client for performing security assessments
-    security_client: SecurityClient,
+    pub(crate) security_client: SecurityClient,
 }
 
 impl AppState {
@@ -97,6 +122,10 @@ impl AppStateBuilder {
     }
 }
 
+//------------------------------------------------------------------------------
+// Application Entry Point
+//------------------------------------------------------------------------------
+
 // Application entry point that initializes and runs the server.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -108,15 +137,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create application state
     let state = build_app_state(&config)?;
+    info!("Application state initialized successfully");
 
     // Build router with all the Ollama API endpoints
     let app = build_router(state);
+    info!("Router configured with all endpoints");
 
     // Start the server
+    info!("Starting server with configuration: {:?}", config.server);
     start_server(app, &config.server).await?;
 
     Ok(())
 }
+
+//------------------------------------------------------------------------------
+// Helper Functions
+//------------------------------------------------------------------------------
 
 // Sets up logging with the configured level.
 fn setup_logging(debug_level_str: &str) {
@@ -137,15 +173,23 @@ fn setup_logging(debug_level_str: &str) {
 
 // Builds the application state with configured clients.
 fn build_app_state(config: &config::Config) -> Result<AppState, Box<dyn std::error::Error>> {
+    info!("Building application state with configured clients");
+    
+    let ollama_client = OllamaClient::new(&config.ollama.base_url);
+    info!("Created Ollama client with base URL: {}", config.ollama.base_url);
+    
+    let security_client = SecurityClient::new(
+        &config.security.base_url,
+        &config.security.api_key,
+        &config.security.profile_name,
+        &config.security.app_name,
+        &config.security.app_user,
+    );
+    info!("Created security client with base URL: {}", config.security.base_url);
+    
     let state = AppState::builder()
-        .with_ollama_client(OllamaClient::new(&config.ollama.base_url))
-        .with_security_client(SecurityClient::new(
-            &config.security.base_url,
-            &config.security.api_key,
-            &config.security.profile_name,
-            &config.security.app_name,
-            &config.security.app_user,
-        ))
+        .with_ollama_client(ollama_client)
+        .with_security_client(security_client)
         .build()?;
 
     Ok(state)
@@ -153,6 +197,8 @@ fn build_app_state(config: &config::Config) -> Result<AppState, Box<dyn std::err
 
 // Builds the router with all API endpoints.
 fn build_router(state: AppState) -> Router {
+    info!("Building API router with all endpoints");
+    
     Router::new()
         // Generation endpoints
         .route("/api/generate", post(generate::handle_generate))
@@ -182,6 +228,8 @@ async fn start_server(
 
     info!("Listening on {}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    info!("Server started successfully");
+    
     axum::serve(listener, app).await?;
 
     Ok(())

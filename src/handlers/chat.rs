@@ -2,8 +2,21 @@
 //
 // This module handles chat completion requests with security assessment
 // for both incoming prompts and outgoing AI responses.
+//
+// # Module Overview
+//
+// The chat handler serves as a secure proxy between clients and the Ollama API,
+// ensuring that both prompts sent to the language model and responses from the
+// model are scanned for security issues using Palo Alto Networks' AI Runtime API.
+//
+// # Features
+//
+// - Security assessment of all chat messages
+// - Support for both streaming and non-streaming response formats
+// - Consistent error handling and security violation reporting
+// - Transparent proxying of valid requests to Ollama backend
 use axum::{extract::State, response::Response, Json};
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 use crate::handlers::utils::{
     build_json_response, build_violation_response, format_security_violation_message,
@@ -14,6 +27,10 @@ use crate::stream::SecurityAssessable;
 use crate::types::{ChatRequest, ChatResponse, Message};
 use crate::AppState;
 
+//------------------------------------------------------------------------------
+// Type Implementations
+//------------------------------------------------------------------------------
+
 // Implementation of SecurityAssessable for ChatResponse to facilitate
 // security scanning of streaming responses.
 impl SecurityAssessable for crate::types::ChatResponse {
@@ -21,6 +38,10 @@ impl SecurityAssessable for crate::types::ChatResponse {
         Some((&self.message.content, "chat_response"))
     }
 }
+
+//------------------------------------------------------------------------------
+// Public API
+//------------------------------------------------------------------------------
 
 // Handles chat completion requests with security assessment.
 //
@@ -46,7 +67,12 @@ pub async fn handle_chat(
     // Ensure stream parameter is always set, defaulting to false
     request.stream = Some(request.stream.unwrap_or(false));
 
-    debug!("Received chat request for model: {}", request.model);
+    info!("Received chat request for model: {}", request.model);
+    debug!(
+        "Chat request details: stream={}, messages={}",
+        request.stream.unwrap(),
+        request.messages.len()
+    );
 
     // Security assessment: check all input messages for policy violations
     if let Err(response) = assess_chat_messages(&state, &request).await? {
@@ -62,6 +88,10 @@ pub async fn handle_chat(
         handle_non_streaming_chat(State(state), Json(request)).await
     }
 }
+
+//------------------------------------------------------------------------------
+// Helper Functions
+//------------------------------------------------------------------------------
 
 // Assesses all chat messages for security policy violations.
 //
@@ -79,7 +109,14 @@ async fn assess_chat_messages(
     state: &AppState,
     request: &ChatRequest,
 ) -> Result<Result<(), Response>, ApiError> {
-    for message in &request.messages {
+    for (index, message) in request.messages.iter().enumerate() {
+        debug!(
+            "Assessing message {}/{}: role={}",
+            index + 1,
+            request.messages.len(),
+            message.role
+        );
+
         let assessment = state
             .security_client
             .assess_content(&message.content, &request.model, true)
@@ -105,6 +142,7 @@ async fn assess_chat_messages(
         }
     }
 
+    debug!("All messages passed security assessment");
     Ok(Ok(()))
 }
 
@@ -131,6 +169,8 @@ async fn handle_non_streaming_chat(
         ApiError::InternalError("Failed to parse response".to_string())
     })?;
 
+    debug!("Received response from Ollama, performing security assessment");
+
     // Security assessment on response content
     let assessment = state
         .security_client
@@ -147,6 +187,7 @@ async fn handle_non_streaming_chat(
         return build_violation_response(response_body);
     }
 
+    info!("Chat response passed security checks, returning to client");
     Ok(build_json_response(body_bytes)?)
 }
 
