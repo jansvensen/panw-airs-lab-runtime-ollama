@@ -29,10 +29,6 @@ use tower_http::trace::TraceLayer;
 use tracing::info;
 
 // Shared application state containing clients for external services.
-//
-// This state is shared across all request handlers and contains
-// initialized clients for communicating with Ollama and security services.
-// The PANW AI Runtime API is used for security assessments of prompts and responses.
 #[derive(Clone)]
 pub struct AppState {
     ollama_client: OllamaClient,
@@ -41,28 +37,12 @@ pub struct AppState {
 
 impl AppState {
     // Creates a new builder for constructing AppState with a fluent API.
-    //
-    // # Returns
-    //
-    // A new AppStateBuilder instance for configuring and building the application state.
-    //
-    // # Examples
-    //
-    // ```
-    // let state = AppState::builder()
-    //     .with_ollama_client(ollama_client)
-    //     .with_security_client(security_client)
-    //     .build()?;
-    // ```
     pub fn builder() -> AppStateBuilder {
         AppStateBuilder::default()
     }
 }
 
 // Builder for creating AppState instances with a fluent API.
-//
-// This builder ensures that all required components are provided
-// before constructing the final AppState.
 #[derive(Default)]
 pub struct AppStateBuilder {
     ollama_client: Option<OllamaClient>,
@@ -71,43 +51,18 @@ pub struct AppStateBuilder {
 
 impl AppStateBuilder {
     // Sets the Ollama client for the application state.
-    //
-    // # Arguments
-    //
-    // * `client` - An initialized OllamaClient instance
-    //
-    // # Returns
-    //
-    // The builder instance for method chaining
     pub fn with_ollama_client(mut self, client: OllamaClient) -> Self {
         self.ollama_client = Some(client);
         self
     }
 
     // Sets the security client for the application state.
-    //
-    // # Arguments
-    //
-    // * `client` - An initialized SecurityClient instance for PANW AI Runtime API
-    //
-    // # Returns
-    //
-    // The builder instance for method chaining
     pub fn with_security_client(mut self, client: SecurityClient) -> Self {
         self.security_client = Some(client);
         self
     }
 
     // Builds the AppState from the configured components.
-    //
-    // # Returns
-    //
-    // * `Ok(AppState)` - The fully constructed application state
-    // * `Err(&'static str)` - Error message if any required component is missing
-    //
-    // # Errors
-    //
-    // Returns an error if either the Ollama client or security client is not provided
     pub fn build(self) -> Result<AppState, &'static str> {
         let ollama_client = self.ollama_client.ok_or("OllamaClient is required")?;
         let security_client = self.security_client.ok_or("SecurityClient is required")?;
@@ -119,32 +74,10 @@ impl AppStateBuilder {
 }
 
 // Application entry point that initializes and runs the server.
-//
-// This function:
-// 1. Initializes logging
-// 2. Loads the application configuration
-// 3. Creates clients for Ollama and PANW AI Runtime security services
-// 4. Sets up the HTTP router with all API endpoints
-// 5. Starts the server listening for connections
-//
-// # Returns
-//
-// * `Ok(())` - Server started successfully
-// * `Err(Box<dyn std::error::Error>)` - Error during initialization or execution
-//
-// # Errors
-//
-// May return errors if:
-// - Configuration loading fails
-// - Server address binding fails
-// - Other I/O errors occur during server startup
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load configuration
-    let config = config::load_config("config.yaml").map_err(|e| {
-        eprintln!("Failed to load configuration: {}", e);
-        e
-    })?;
+    let config = config::load_config("config.yaml")?;
 
     // Parse the debug level from config
     let debug_level = tracing::Level::from_str(&config.server.debug_level).unwrap_or_else(|_| {
@@ -157,23 +90,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize logging with the configured level
     tracing_subscriber::fmt().with_max_level(debug_level).init();
-
     info!(
         "Starting panw-api-ollama server with log level: {}",
         debug_level
     );
 
     // Create application state
-    let state = AppState {
-        ollama_client: OllamaClient::new(&config.ollama.base_url),
-        security_client: SecurityClient::new(
+    let state = AppState::builder()
+        .with_ollama_client(OllamaClient::new(&config.ollama.base_url))
+        .with_security_client(SecurityClient::new(
             &config.security.base_url,
             &config.security.api_key,
             &config.security.profile_name,
             &config.security.app_name,
             &config.security.app_user,
-        ),
-    };
+        ))
+        .build()?;
 
     // Build router with all the Ollama API endpoints
     let app = Router::new()
