@@ -1,7 +1,7 @@
 use crate::types::{AiProfile, Content, Metadata, ScanRequest, ScanResponse};
 use reqwest::Client;
 use thiserror::Error;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 // Represents errors that can occur during security assessments with the PANW AI Runtime API.
@@ -312,6 +312,8 @@ impl SecurityClient {
 
         // Create the content object
         let content_obj = self.prepare_content(content, is_prompt)?;
+
+        info!("Prepared content for PANW assessment: {:#?}", content_obj);
 
         // Create and send the request payload
         let payload = self.create_scan_request(content_obj, model_name);
