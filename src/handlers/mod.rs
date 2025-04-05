@@ -4,6 +4,7 @@ pub mod generate;
 pub mod models;
 pub mod utils;
 pub mod version;
+pub mod security_utils;
 
 use axum::{
     http::StatusCode,

@@ -1,6 +1,9 @@
 use axum::{extract::State, response::Response, Json};
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
+use crate::handlers::security_utils::{
+    build_violation_response, format_security_violation_message, log_security_failure,
+};
 use crate::handlers::utils::{build_json_response, handle_streaming_request};
 use crate::handlers::ApiError;
 use crate::stream::SecurityAssessable;
@@ -17,32 +20,22 @@ pub async fn handle_generate(
     State(state): State<AppState>,
     Json(mut request): Json<GenerateRequest>,
 ) -> Result<Response, ApiError> {
-
     request.stream = Some(false);
 
     debug!("Received generate request for model: {}", request.model);
 
+    // Check input prompt
     let assessment = state
         .security_client
         .assess_content(&request.prompt, &request.model, true)
         .await?;
 
     if !assessment.is_safe {
-        info!(
-            "Security issue detected in prompt: category={}, action={}",
-            assessment.category, assessment.action
-        );
+        log_security_failure("prompt", &assessment.category, &assessment.action);
 
-        // Instead of returning an error, create a response with explanation
-        let blocked_message = format!(
-            "⚠️ This response was blocked due to security policy violations:\n\n\
-            • Category: {}\n\
-            • Action: {}\n\n\
-            Please reformulate your request to comply with security policies.",
-            assessment.category, assessment.action
-        );
-
-        let response = crate::types::GenerateResponse {
+        let blocked_message = format_security_violation_message(&assessment.category, &assessment.action);
+        
+        let response = GenerateResponse {
             model: request.model.clone(),
             created_at: chrono::Utc::now().to_rfc3339(),
             response: blocked_message,
@@ -50,12 +43,7 @@ pub async fn handle_generate(
             done: true,
         };
 
-        let json_bytes = serde_json::to_vec(&response).map_err(|e| {
-            error!("Failed to serialize response: {}", e);
-            ApiError::InternalError("Failed to serialize response".to_string())
-        })?;
-
-        return Ok(build_json_response(bytes::Bytes::from(json_bytes))?);
+        return build_violation_response(response);
     }
 
     // Handle streaming requests
@@ -76,40 +64,25 @@ pub async fn handle_generate(
         ApiError::InternalError("Failed to read response body".to_string())
     })?;
 
-    let mut response_body: crate::types::GenerateResponse = serde_json::from_slice(&body_bytes)
+    let mut response_body: GenerateResponse = serde_json::from_slice(&body_bytes)
         .map_err(|e| {
             error!("Failed to parse response: {}", e);
             ApiError::InternalError("Failed to parse response".to_string())
         })?;
 
+    // Check model output
     let assessment = state
         .security_client
         .assess_content(&response_body.response, &request.model, false)
         .await?;
 
     if !assessment.is_safe {
-        info!(
-            "Security issue detected in response: category={}, action={}",
-            assessment.category, assessment.action
-        );
+        log_security_failure("response", &assessment.category, &assessment.action);
 
-        // Replace the content with security message instead of returning error
-        let blocked_message = format!(
-            "⚠️ This response was blocked due to security policy violations:\n\n\
-            • Category: {}\n\
-            • Action: {}\n\n\
-            Please reformulate your request to comply with security policies.",
-            assessment.category, assessment.action
-        );
-
-        response_body.response = blocked_message;
-
-        let json_bytes = serde_json::to_vec(&response_body).map_err(|e| {
-            error!("Failed to serialize response: {}", e);
-            ApiError::InternalError("Failed to serialize response".to_string())
-        })?;
-
-        return Ok(build_json_response(bytes::Bytes::from(json_bytes))?);
+        // Replace the content with security message
+        response_body.response = format_security_violation_message(&assessment.category, &assessment.action);
+        
+        return build_violation_response(response_body);
     }
 
     Ok(build_json_response(body_bytes)?)
