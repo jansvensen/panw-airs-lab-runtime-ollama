@@ -1,10 +1,10 @@
 use axum::{extract::State, response::Response, Json};
 use tracing::{debug, error};
 
-use crate::handlers::security_utils::{
-    build_violation_response, format_security_violation_message, log_security_failure,
+use crate::handlers::utils::{
+    build_json_response, build_violation_response, format_security_violation_message,
+    handle_streaming_request, log_security_failure,
 };
-use crate::handlers::utils::{build_json_response, handle_streaming_request};
 use crate::handlers::ApiError;
 use crate::stream::SecurityAssessable;
 use crate::types::{ChatRequest, ChatResponse, Message};
@@ -33,9 +33,10 @@ pub async fn handle_chat(
 
         if !assessment.is_safe {
             log_security_failure("chat message", &assessment.category, &assessment.action);
-            
-            let blocked_message = format_security_violation_message(&assessment.category, &assessment.action);
-            
+
+            let blocked_message =
+                format_security_violation_message(&assessment.category, &assessment.action);
+
             let response = ChatResponse {
                 model: request.model.clone(),
                 created_at: chrono::Utc::now().to_rfc3339(),
@@ -45,7 +46,7 @@ pub async fn handle_chat(
                 },
                 done: true,
             };
-            
+
             return build_violation_response(response);
         }
     }
@@ -64,11 +65,10 @@ pub async fn handle_chat(
         ApiError::InternalError("Failed to read response body".to_string())
     })?;
 
-    let mut response_body: ChatResponse = serde_json::from_slice(&body_bytes)
-        .map_err(|e| {
-            error!("Failed to parse response: {}", e);
-            ApiError::InternalError("Failed to parse response".to_string())
-        })?;
+    let mut response_body: ChatResponse = serde_json::from_slice(&body_bytes).map_err(|e| {
+        error!("Failed to parse response: {}", e);
+        ApiError::InternalError("Failed to parse response".to_string())
+    })?;
 
     // Check response for security violations
     let assessment = state
@@ -80,7 +80,8 @@ pub async fn handle_chat(
         log_security_failure("chat response", &assessment.category, &assessment.action);
 
         // Replace the content with security message
-        response_body.message.content = format_security_violation_message(&assessment.category, &assessment.action);
+        response_body.message.content =
+            format_security_violation_message(&assessment.category, &assessment.action);
 
         return build_violation_response(response_body);
     }
