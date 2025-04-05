@@ -154,7 +154,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 // Helper Functions
 //------------------------------------------------------------------------------
 
-// Sets up logging with the configured level.
+/// Sets up logging with the configured level.
+///
+/// Initializes the tracing subscriber with the appropriate log level
+/// based on the configuration setting.
+///
+/// # Arguments
+///
+/// * `debug_level_str` - The string representation of the desired log level
 fn setup_logging(debug_level_str: &str) {
     let debug_level = tracing::Level::from_str(debug_level_str).unwrap_or_else(|_| {
         error!(
@@ -164,20 +171,42 @@ fn setup_logging(debug_level_str: &str) {
         tracing::Level::ERROR
     });
 
-    tracing_subscriber::fmt().with_max_level(debug_level).init();
+    tracing_subscriber::fmt()
+        .with_max_level(debug_level)
+        .with_target(true) // Include module path in logs
+        .with_thread_ids(true) // Include thread IDs for concurrent diagnostics
+        .init();
+
     info!(
         "Starting panw-api-ollama server with log level: {}",
         debug_level
     );
 }
 
-// Builds the application state with configured clients.
+/// Builds the application state with configured clients.
+///
+/// Creates and initializes the application state containing clients
+/// for Ollama API and PANW security services.
+///
+/// # Arguments
+///
+/// * `config` - The application configuration
+///
+/// # Returns
+///
+/// * `Ok(AppState)` - Initialized application state
+/// * `Err` - If client creation or initialization fails
 fn build_app_state(config: &config::Config) -> Result<AppState, Box<dyn std::error::Error>> {
     info!("Building application state with configured clients");
-    
+
+    // Create Ollama client
     let ollama_client = OllamaClient::new(&config.ollama.base_url);
-    info!("Created Ollama client with base URL: {}", config.ollama.base_url);
-    
+    info!(
+        "Created Ollama client with base URL: {}",
+        config.ollama.base_url
+    );
+
+    // Create security client
     let security_client = SecurityClient::new(
         &config.security.base_url,
         &config.security.api_key,
@@ -185,8 +214,12 @@ fn build_app_state(config: &config::Config) -> Result<AppState, Box<dyn std::err
         &config.security.app_name,
         &config.security.app_user,
     );
-    info!("Created security client with base URL: {}", config.security.base_url);
-    
+    info!(
+        "Created security client with base URL: {}",
+        config.security.base_url
+    );
+
+    // Build the application state using the builder pattern
     let state = AppState::builder()
         .with_ollama_client(ollama_client)
         .with_security_client(security_client)
@@ -195,41 +228,72 @@ fn build_app_state(config: &config::Config) -> Result<AppState, Box<dyn std::err
     Ok(state)
 }
 
-// Builds the router with all API endpoints.
+/// Builds the router with all API endpoints.
+///
+/// Creates an Axum router with all the API endpoints and middleware.
+///
+/// # Arguments
+///
+/// * `state` - The application state to be shared with handlers
+///
+/// # Returns
+///
+/// An Axum router configured with all endpoints
 fn build_router(state: AppState) -> Router {
     info!("Building API router with all endpoints");
-    
-    Router::new()
-        // Generation endpoints
+
+    // Group endpoints by functionality
+    let generation_routes = Router::new()
         .route("/api/generate", post(generate::handle_generate))
         .route("/api/chat", post(chat::handle_chat))
-        .route("/api/embeddings", post(embeddings::handle_embeddings))
-        // Model management endpoints
+        .route("/api/embeddings", post(embeddings::handle_embeddings));
+
+    let model_routes = Router::new()
         .route("/api/tags", get(models::handle_list_models))
         .route("/api/show", post(models::handle_show_model))
         .route("/api/create", post(models::handle_create_model))
         .route("/api/copy", post(models::handle_copy_model))
         .route("/api/delete", post(models::handle_delete_model))
         .route("/api/pull", post(models::handle_pull_model))
-        .route("/api/push", post(models::handle_push_model))
-        // Utility endpoints
-        .route("/api/version", get(version::handle_version))
-        // Middleware and state
+        .route("/api/push", post(models::handle_push_model));
+
+    let utility_routes = Router::new().route("/api/version", get(version::handle_version));
+
+    // Combine all routes
+    let app = Router::new()
+        .merge(generation_routes)
+        .merge(model_routes)
+        .merge(utility_routes)
         .layer(TraceLayer::new_for_http())
-        .with_state(state)
+        .with_state(state);
+
+    app
 }
 
-// Starts the HTTP server with the configured router.
+/// Starts the HTTP server with the configured router.
+///
+/// Binds to the configured address and port and starts serving requests.
+///
+/// # Arguments
+///
+/// * `app` - The configured Axum router
+/// * `server_config` - Server configuration settings
+///
+/// # Returns
+///
+/// * `Ok(())` - If the server starts and runs successfully
+/// * `Err` - If binding fails or the server encounters an error
 async fn start_server(
     app: Router,
     server_config: &config::ServerConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let addr = SocketAddr::new(IpAddr::from_str(&server_config.host)?, server_config.port);
 
-    info!("Listening on {}", addr);
+    info!("Binding server to {}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    info!("Server started successfully");
-    
+    info!("Server started successfully on {}", addr);
+
+    info!("Waiting for incoming connections...");
     axum::serve(listener, app).await?;
 
     Ok(())

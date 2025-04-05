@@ -95,6 +95,9 @@ pub async fn handle_chat(
 
 // Assesses all chat messages for security policy violations.
 //
+// Iterates through each message in the chat request and uses the security client
+// to check for policy violations or harmful content.
+//
 // # Arguments
 //
 // * `state` - Application state containing security client
@@ -152,6 +155,16 @@ async fn assess_chat_messages(
 // 1. Forwards the request to Ollama
 // 2. Performs security assessment on the response
 // 3. Returns the response or a security violation message
+//
+// # Arguments
+//
+// * `State(state)` - Application state containing client connections
+// * `Json(request)` - The chat completion request from the client
+//
+// # Returns
+//
+// * `Ok(Response)` - The processed chat response
+// * `Err(ApiError)` - If an error occurs during processing
 async fn handle_non_streaming_chat(
     State(state): State<AppState>,
     Json(request): Json<ChatRequest>,
@@ -192,6 +205,19 @@ async fn handle_non_streaming_chat(
 }
 
 // Handles streaming chat requests using the generic streaming handler.
+//
+// Sets up a streaming request to Ollama and wraps the response stream
+// with security assessment capabilities.
+//
+// # Arguments
+//
+// * `State(state)` - Application state containing client connections
+// * `Json(request)` - The chat completion request from the client
+//
+// # Returns
+//
+// * `Ok(Response)` - The streaming response
+// * `Err(ApiError)` - If an error occurs during processing
 async fn handle_streaming_chat(
     State(state): State<AppState>,
     Json(request): Json<ChatRequest>,

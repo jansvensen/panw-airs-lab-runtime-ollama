@@ -106,6 +106,11 @@ pub struct SecurityClient {
 }
 
 impl Content {
+    // Creates a new Content builder for constructing Content with a fluent API.
+    pub fn builder() -> ContentBuilder {
+        ContentBuilder::default()
+    }
+
     // Creates a new Content object containing either a prompt or a response or both.
     //
     // # Arguments
@@ -141,7 +146,60 @@ impl Content {
     }
 }
 
+// Builder for creating Content instances with a fluent API.
+#[derive(Default)]
+pub struct ContentBuilder {
+    prompt: Option<String>,
+    response: Option<String>,
+    code_prompt: Option<String>,
+    code_response: Option<String>,
+}
+
+impl ContentBuilder {
+    // Sets the prompt text.
+    pub fn with_prompt(mut self, prompt: String) -> Self {
+        self.prompt = Some(prompt);
+        self
+    }
+
+    // Sets the response text.
+    pub fn with_response(mut self, response: String) -> Self {
+        self.response = Some(response);
+        self
+    }
+
+    // Sets the code extracted from the prompt.
+    pub fn with_code_prompt(mut self, code: String) -> Self {
+        self.code_prompt = Some(code);
+        self
+    }
+
+    // Sets the code extracted from the response.
+    pub fn with_code_response(mut self, code: String) -> Self {
+        self.code_response = Some(code);
+        self
+    }
+
+    // Builds the Content from the configured components.
+    //
+    // # Errors
+    //
+    // Returns an error if no fields were populated.
+    pub fn build(self) -> Result<Content, &'static str> {
+        Content::new(
+            self.prompt,
+            self.response,
+            self.code_prompt,
+            self.code_response,
+        )
+    }
+}
+
 impl SecurityClient {
+    //--------------------------------------------------------------------------
+    // Construction and Initialization
+    //--------------------------------------------------------------------------
+
     // Creates a new instance of the SecurityClient for performing content security assessments.
     //
     // # Arguments
@@ -167,6 +225,10 @@ impl SecurityClient {
             app_user: app_user.to_string(),
         }
     }
+
+    //--------------------------------------------------------------------------
+    // Public API Methods
+    //--------------------------------------------------------------------------
 
     // Performs a security assessment on the provided content using PANW AI Runtime API.
     //
@@ -207,6 +269,10 @@ impl SecurityClient {
         self.process_scan_result(scan_result)
     }
 
+    //--------------------------------------------------------------------------
+    // Content Processing Methods
+    //--------------------------------------------------------------------------
+
     // Creates a default safe assessment for empty content.
     //
     // This is an optimization to avoid unnecessary API calls for empty content.
@@ -219,24 +285,32 @@ impl SecurityClient {
         }
     }
 
-    // Extracts code blocks from text using simple Markdown parsing.
+    // Extracts code blocks from text using Markdown code block syntax.
+    //
+    // This function parses the input text and extracts all content between
+    // triple backtick (```) markers, which is the standard Markdown syntax
+    // for code blocks.
     //
     // # Arguments
     //
-    // * `content` - The text to extract code blocks from
+    // * `content` - The text content to extract code blocks from
     //
     // # Returns
     //
-    // String containing all extracted code blocks concatenated together
+    // A string containing all extracted code blocks concatenated together
     fn extract_code_blocks(&self, content: &str) -> String {
         let mut code_content = String::new();
         let mut in_code_block = false;
         let mut buffer = String::new();
+        let mut language_marker = false;
 
         for line in content.lines() {
-            if line.trim().starts_with("```") {
+            let trimmed = line.trim();
+
+            // Check for code block delimiter
+            if trimmed.starts_with("```") {
                 if in_code_block {
-                    // End of code block
+                    // End of code block - add collected content to result
                     code_content.push_str(&buffer);
                     code_content.push('\n');
                     buffer.clear();
@@ -244,15 +318,24 @@ impl SecurityClient {
                 } else {
                     // Start of code block
                     in_code_block = true;
+                    // If there's content after the ``` it's a language specifier, skip this line
+                    language_marker = trimmed.len() > 3;
                 }
             } else if in_code_block {
+                // Skip the first line if it was just a language marker
+                if language_marker {
+                    language_marker = false;
+                    continue;
+                }
+
+                // Inside a code block - collect content
                 buffer.push_str(line);
                 buffer.push('\n');
             }
         }
 
-        // Append any remaining buffer if the input ends with an open code block
-        if in_code_block {
+        // Handle case where the content ends with an unclosed code block
+        if in_code_block && !buffer.is_empty() {
             code_content.push_str(&buffer);
             code_content.push('\n');
         }
@@ -275,23 +358,26 @@ impl SecurityClient {
         let code_blocks = self.extract_code_blocks(content);
         let has_code = !code_blocks.is_empty();
 
-        let content_obj = if is_prompt {
-            Content::new(
-                Some(content.to_string()),
-                None,
-                if has_code { Some(code_blocks) } else { None },
-                None,
-            )
+        // Use the builder pattern for creating content objects
+        let builder = Content::builder();
+
+        let content_builder = if is_prompt {
+            let mut builder = builder.with_prompt(content.to_string());
+            if has_code {
+                builder = builder.with_code_prompt(code_blocks);
+            }
+            builder
         } else {
-            Content::new(
-                None,
-                Some(content.to_string()),
-                None,
-                if has_code { Some(code_blocks) } else { None },
-            )
+            let mut builder = builder.with_response(content.to_string());
+            if has_code {
+                builder = builder.with_code_response(code_blocks);
+            }
+            builder
         };
 
-        content_obj.map_err(|e| SecurityError::AssessmentError(e.to_string()))
+        content_builder
+            .build()
+            .map_err(|e| SecurityError::AssessmentError(e.to_string()))
     }
 
     // Processes scan results from the PANW AI Runtime API into an Assessment.
@@ -324,6 +410,10 @@ impl SecurityClient {
 
         Ok(assessment)
     }
+
+    //--------------------------------------------------------------------------
+    // API Request Methods
+    //--------------------------------------------------------------------------
 
     // Creates a scan request payload for the PANW AI Runtime API.
     //
