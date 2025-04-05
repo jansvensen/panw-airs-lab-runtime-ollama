@@ -86,9 +86,7 @@ where
         .map_err(|e| ApiError::InternalError(format!("Failed to create response: {}", e)))
 }
 
-// Security utility functions (moved from security_utils.rs)
-
-/// Formats a standard security violation message
+// Formats a standard security violation message
 pub fn format_security_violation_message(category: &str, action: &str) -> String {
     format!(
         "⚠️ This response was blocked due to security policy violations:\n\n\
@@ -99,7 +97,7 @@ pub fn format_security_violation_message(category: &str, action: &str) -> String
     )
 }
 
-/// Logs security assessment failures
+// Logs security assessment failures
 pub fn log_security_failure(context: &str, category: &str, action: &str) {
     info!(
         "Security issue detected in {}: category={}, action={}",
@@ -107,7 +105,7 @@ pub fn log_security_failure(context: &str, category: &str, action: &str) {
     );
 }
 
-/// Builds a response with serialized data for a security violation
+// Builds a response with serialized data for a security violation
 pub fn build_violation_response<T: serde::Serialize>(
     data: T,
 ) -> Result<Response, ApiError> {
