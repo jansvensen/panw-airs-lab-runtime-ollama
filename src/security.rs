@@ -197,6 +197,12 @@ impl SecurityClient {
             }
         }
 
+        // Append any remaining buffer if the input ends with an open code block
+        if in_code_block {
+            code_content.push_str(&buffer);
+            code_content.push('\n');
+        }
+
         code_content
     }
 
