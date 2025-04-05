@@ -13,7 +13,7 @@ pub mod models;
 pub mod utils;
 pub mod version;
 
-/// Custom error types for API handling
+// Custom error types for API handling
 #[derive(Debug)]
 pub enum ApiError {
     OllamaError(crate::ollama::OllamaError),

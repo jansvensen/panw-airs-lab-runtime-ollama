@@ -3,6 +3,7 @@ use crate::{
     stream::{SecurityAssessable, SecurityAssessedStream, StreamError},
     AppState,
 };
+
 use axum::{body::Body, response::Response};
 use bytes::Bytes;
 use futures_util::stream::StreamExt;
@@ -11,14 +12,14 @@ use serde::{de::DeserializeOwned, Serialize};
 use tracing::{error, info};
 
 // Builds an HTTP response with JSON content type from the provided bytes.
-pub fn build_json_response(bytes: Bytes) -> Result<Response, ApiError> {
+pub fn build_json_response(bytes: Bytes) -> Result<Response<Body>, ApiError> {
     Response::builder()
         .header("Content-Type", "application/json")
         .body(Body::from(bytes))
         .map_err(|e| ApiError::InternalError(format!("Failed to create response: {}", e)))
 }
 
-// Helper function to convert reqwest Error to StreamError
+// Helper function to convert `reqwest::Error` to `StreamError`.
 fn convert_stream_error(_err: reqwest::Error) -> StreamError {
     StreamError::Unknown
 }
@@ -29,7 +30,7 @@ pub async fn handle_streaming_request<T, R>(
     request: T,
     endpoint: &str,
     model: &str,
-) -> Result<Response, ApiError>
+) -> Result<Response<Body>, ApiError>
 where
     T: Serialize + Send + 'static,
     R: SecurityAssessable + DeserializeOwned + Serialize + Send + Sync + Unpin + 'static,
@@ -62,16 +63,13 @@ where
             let error_message = match e {
                 _ => "Error processing response",
             };
-
             let error_json = serde_json::json!({
                 "model": model_string, // Use the cloned string here
                 "error": error_message,
                 "done": true
             });
-
             let error_bytes = serde_json::to_vec(&error_json)
                 .unwrap_or_else(|_| error_message.as_bytes().to_vec());
-
             Ok(Bytes::from(error_bytes))
         }
     });
@@ -86,18 +84,18 @@ where
         .map_err(|e| ApiError::InternalError(format!("Failed to create response: {}", e)))
 }
 
-// Formats a standard security violation message
+// Formats a standard security violation message.
 pub fn format_security_violation_message(category: &str, action: &str) -> String {
     format!(
         "⚠️ This response was blocked due to security policy violations:\n\n\
-        • Category: {}\n\
-        • Action: {}\n\n\
-        Please reformulate your request to comply with security policies.",
+         • Category: {}\n\
+         • Action: {}\n\n\
+         Please reformulate your request to comply with security policies.",
         category, action
     )
 }
 
-// Logs security assessment failures
+// Logs security assessment failures.
 pub fn log_security_failure(context: &str, category: &str, action: &str) {
     info!(
         "Security issue detected in {}: category={}, action={}",
@@ -105,14 +103,14 @@ pub fn log_security_failure(context: &str, category: &str, action: &str) {
     );
 }
 
-// Builds a response with serialized data for a security violation
-pub fn build_violation_response<T: serde::Serialize>(
-    data: T,
-) -> Result<Response, ApiError> {
+// Builds a response with serialized data for a security violation.
+pub fn build_violation_response<T>(data: T) -> Result<Response<Body>, ApiError>
+where
+    T: Serialize,
+{
     let json_bytes = serde_json::to_vec(&data).map_err(|e| {
         error!("Failed to serialize response: {}", e);
         ApiError::InternalError("Failed to serialize response".to_string())
     })?;
-
-    build_json_response(bytes::Bytes::from(json_bytes))
+    build_json_response(Bytes::from(json_bytes))
 }
