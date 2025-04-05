@@ -44,7 +44,7 @@ pub async fn handle_generate(
     Json(mut request): Json<GenerateRequest>,
 ) -> Result<Response, ApiError> {
     // Ensure stream parameter is explicitly set
-    request.stream = Some(request.stream.unwrap_or(false));
+    request.stream = Some(false);
 
     debug!("Received generate request for model: {}", request.model);
 

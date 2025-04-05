@@ -64,8 +64,8 @@ pub async fn handle_chat(
     State(state): State<AppState>,
     Json(mut request): Json<ChatRequest>,
 ) -> Result<Response, ApiError> {
-    // Ensure stream parameter is always set, defaulting to false
-    request.stream = Some(request.stream.unwrap_or(false));
+    // Ensure stream parameter is always set
+    request.stream = Some(false);
 
     info!("Received chat request for model: {}", request.model);
     debug!(
