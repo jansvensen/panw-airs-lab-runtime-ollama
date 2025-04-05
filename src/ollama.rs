@@ -9,7 +9,6 @@ use tracing::{debug, error};
 pub enum OllamaError {
     #[error("HTTP request failed: {0}")]
     RequestError(#[from] reqwest::Error),
-
     #[error("Ollama API error: {status} - {message}")]
     ApiError { status: StatusCode, message: String },
 }
@@ -28,63 +27,47 @@ impl OllamaClient {
         }
     }
 
-    pub async fn forward<T: Serialize>(
+    // Forwards a POST request to the specified endpoint with the provided body.
+    pub async fn forward<T: Serialize + ?Sized>(
         &self,
         endpoint: &str,
         body: &T,
     ) -> Result<Response, OllamaError> {
-        let url = format!("{}{}", self.base_url, endpoint);
-        debug!("Forwarding request to {}", url);
-
-        let response = self.client.post(&url).json(body).send().await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let message = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            error!("Ollama API error: {} - {}", status, message);
-            return Err(OllamaError::ApiError { status, message });
-        }
-
-        Ok(response)
+        self.forward_request(endpoint, |url| self.client.post(url).json(body))
+            .await
     }
 
+    // Forwards a GET request to the specified endpoint.
     pub async fn forward_get(&self, endpoint: &str) -> Result<Response, OllamaError> {
-        debug!("Forwarding GET request to {}{}", self.base_url, endpoint);
-        let response = self
-            .client
-            .get(&format!("{}{}", self.base_url, endpoint))
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let message = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            error!("Ollama API error: {} - {}", status, message);
-            return Err(OllamaError::ApiError { status, message });
-        }
-
-        Ok(response)
+        self.forward_request(endpoint, |url| self.client.get(url))
+            .await
     }
 
-    pub async fn stream<T: Serialize>(
+    // Streams data from the specified endpoint with the provided body.
+    pub async fn stream<T: Serialize + ?Sized>(
         &self,
         endpoint: &str,
         body: &T,
     ) -> Result<impl Stream<Item = Result<Bytes, reqwest::Error>>, OllamaError> {
-        debug!("Streaming from {}{}", self.base_url, endpoint);
         let response = self
-            .client
-            .post(&format!("{}{}", self.base_url, endpoint))
-            .json(body)
-            .send()
+            .forward_request(endpoint, |url| self.client.post(url).json(body))
             .await?;
+        Ok(response.bytes_stream())
+    }
 
+    // Generic method to handle both GET and POST requests, reducing code duplication.
+    async fn forward_request<F>(
+        &self,
+        endpoint: &str,
+        request_builder: F,
+    ) -> Result<Response, OllamaError>
+    where
+        F: FnOnce(&str) -> reqwest::RequestBuilder,
+    {
+        let url = format!("{}{}", self.base_url, endpoint);
+        debug!("Forwarding request to {}", url);
+
+        let response = request_builder(&url).send().await?;
         if !response.status().is_success() {
             let status = response.status();
             let message = response
@@ -95,6 +78,6 @@ impl OllamaClient {
             return Err(OllamaError::ApiError { status, message });
         }
 
-        Ok(response.bytes_stream())
+        Ok(response)
     }
 }
