@@ -6,19 +6,14 @@
 // Module declarations with descriptive comments
 // Configuration loading and management.
 mod config;
-
 // HTTP request handlers for API endpoints.
 mod handlers;
-
 // Client for interacting with Ollama API services.
 mod ollama;
-
 // Security assessment and content filtering using PANW AI Runtime API.
 mod security;
-
 // Utilities for handling streaming responses.
 mod stream;
-
 // Common type definitions used throughout the application.
 mod types;
 
@@ -40,7 +35,7 @@ use std::str::FromStr;
 
 // Middleware and utility imports
 use tower_http::trace::TraceLayer;
-use tracing::info;
+use tracing::{error, info};
 
 // Shared application state containing clients for external services.
 //
@@ -48,7 +43,9 @@ use tracing::info;
 // access to the Ollama client and security assessment functionality.
 #[derive(Clone)]
 pub struct AppState {
+    // Client for communicating with Ollama API
     ollama_client: OllamaClient,
+    // Client for performing security assessments
     security_client: SecurityClient,
 }
 
@@ -65,7 +62,9 @@ impl AppState {
 // for initializing the application state with required components.
 #[derive(Default)]
 pub struct AppStateBuilder {
+    // Optional Ollama client to be set before building
     ollama_client: Option<OllamaClient>,
+    // Optional security client to be set before building
     security_client: Option<SecurityClient>,
 }
 
@@ -90,6 +89,7 @@ impl AppStateBuilder {
     pub fn build(self) -> Result<AppState, &'static str> {
         let ollama_client = self.ollama_client.ok_or("OllamaClient is required")?;
         let security_client = self.security_client.ok_or("SecurityClient is required")?;
+
         Ok(AppState {
             ollama_client,
             security_client,
@@ -103,23 +103,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load configuration
     let config = config::load_config("config.yaml")?;
 
-    // Parse the debug level from config
-    let debug_level = tracing::Level::from_str(&config.server.debug_level).unwrap_or_else(|_| {
-        eprintln!(
+    // Initialize logging
+    setup_logging(&config.server.debug_level);
+
+    // Create application state
+    let state = build_app_state(&config)?;
+
+    // Build router with all the Ollama API endpoints
+    let app = build_router(state);
+
+    // Start the server
+    start_server(app, &config.server).await?;
+
+    Ok(())
+}
+
+// Sets up logging with the configured level.
+fn setup_logging(debug_level_str: &str) {
+    let debug_level = tracing::Level::from_str(debug_level_str).unwrap_or_else(|_| {
+        error!(
             "Unknown debug level: {}, defaulting to ERROR",
-            config.server.debug_level
+            debug_level_str
         );
         tracing::Level::ERROR
     });
 
-    // Initialize logging with the configured level
     tracing_subscriber::fmt().with_max_level(debug_level).init();
     info!(
         "Starting panw-api-ollama server with log level: {}",
         debug_level
     );
+}
 
-    // Create application state
+// Builds the application state with configured clients.
+fn build_app_state(config: &config::Config) -> Result<AppState, Box<dyn std::error::Error>> {
     let state = AppState::builder()
         .with_ollama_client(OllamaClient::new(&config.ollama.base_url))
         .with_security_client(SecurityClient::new(
@@ -131,13 +148,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ))
         .build()?;
 
-    // Build router with all the Ollama API endpoints
-    let app = Router::new()
+    Ok(state)
+}
+
+// Builds the router with all API endpoints.
+fn build_router(state: AppState) -> Router {
+    Router::new()
         // Generation endpoints
         .route("/api/generate", post(generate::handle_generate))
         .route("/api/chat", post(chat::handle_chat))
         .route("/api/embeddings", post(embeddings::handle_embeddings))
-        
         // Model management endpoints
         .route("/api/tags", get(models::handle_list_models))
         .route("/api/show", post(models::handle_show_model))
@@ -146,16 +166,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/delete", post(models::handle_delete_model))
         .route("/api/pull", post(models::handle_pull_model))
         .route("/api/push", post(models::handle_push_model))
-        
         // Utility endpoints
         .route("/api/version", get(version::handle_version))
-        
         // Middleware and state
         .layer(TraceLayer::new_for_http())
-        .with_state(state);
+        .with_state(state)
+}
 
-    // Start the server using the Axum 0.7 API
-    let addr = SocketAddr::new(IpAddr::from_str(&config.server.host)?, config.server.port);
+// Starts the HTTP server with the configured router.
+async fn start_server(
+    app: Router,
+    server_config: &config::ServerConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let addr = SocketAddr::new(IpAddr::from_str(&server_config.host)?, server_config.port);
+
     info!("Listening on {}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;

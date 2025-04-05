@@ -37,7 +37,7 @@ impl SecurityAssessable for crate::types::ChatResponse {
 //
 // # Returns
 //
-// * `Ok(Response)` - The chat completion response 
+// * `Ok(Response)` - The chat completion response
 // * `Err(ApiError)` - If an error occurs during processing
 pub async fn handle_chat(
     State(state): State<AppState>,

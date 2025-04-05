@@ -5,7 +5,7 @@
 use crate::types::{AiProfile, Content, Metadata, ScanRequest, ScanResponse};
 use reqwest::Client;
 use thiserror::Error;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 use uuid::Uuid;
 
 // Represents errors that can occur during security assessments with the PANW AI Runtime API.
@@ -14,19 +14,19 @@ use uuid::Uuid;
 // AI Runtime security services, including network failures, API errors, and content policy violations.
 #[derive(Debug, Error)]
 pub enum SecurityError {
-// Network or HTTP protocol errors
+    // Network or HTTP protocol errors
     #[error("HTTP request failed: {0}")]
     RequestError(#[from] reqwest::Error),
 
-// Errors from the PANW AI Runtime API security service
+    // Errors from the PANW AI Runtime API security service
     #[error("PANW security assessment error: {0}")]
     AssessmentError(String),
 
-// JSON parsing errors when handling API responses
+    // JSON parsing errors when handling API responses
     #[error("JSON parsing error: {0}")]
     JsonError(#[from] serde_json::Error),
 
-// Content that has been blocked by security policy
+    // Content that has been blocked by security policy
     #[error("Content blocked by PANW AI security policy")]
     BlockedContent,
 }
@@ -37,7 +37,7 @@ pub enum SecurityError {
 // including categorization of potential threats and recommended actions.
 #[derive(Debug, Clone)]
 pub struct Assessment {
-// Whether the assessed content is considered safe
+    // Whether the assessed content is considered safe
     pub is_safe: bool,
 
     // Security category assigned to the content (e.g., "benign", "malicious")
@@ -56,7 +56,7 @@ pub struct Assessment {
 // for potential security threats, malicious content, or policy violations.
 #[derive(Clone)]
 pub struct SecurityClient {
-// HTTP client for making API requests
+    // HTTP client for making API requests
     client: Client,
 
     // Base URL for the PANW API service
@@ -76,19 +76,19 @@ pub struct SecurityClient {
 }
 
 impl Content {
-// Creates a new Content object containing either a prompt or a response or both.
+    // Creates a new Content object containing either a prompt or a response or both.
     //
     // # Arguments
-//
-// * `prompt` - Optional text representing a prompt to an AI model
-// * `response` - Optional text representing a response from an AI model
-// * `code_prompt` - Extracted code from prompt
-// * `code_response` - Extracted code from response
-//
-// # Returns
-//
-// * `Ok(Self)` - A valid Content object with at least one field populated
-// * `Err` - An error if all fields are None
+    //
+    // * `prompt` - Optional text representing a prompt to an AI model
+    // * `response` - Optional text representing a response from an AI model
+    // * `code_prompt` - Extracted code from prompt
+    // * `code_response` - Extracted code from response
+    //
+    // # Returns
+    //
+    // * `Ok(Self)` - A valid Content object with at least one field populated
+    // * `Err` - An error if all fields are None
     pub fn new(
         prompt: Option<String>,
         response: Option<String>,
@@ -112,16 +112,16 @@ impl Content {
 }
 
 impl SecurityClient {
-// Creates a new instance of the SecurityClient for performing content security assessments.
+    // Creates a new instance of the SecurityClient for performing content security assessments.
     //
     // # Arguments
-//
-// * `base_url` - The base URL of the PANW AI Runtime security API endpoint
-// * `api_key` - Palo Alto Networks API token for accessing the security services
-// * `profile_name` - Name of the AI security profile to use for assessments
-// * `app_name` - Name of the application using this security client
-// * `app_user` - Identifier for the user or context within the application
-        pub fn new(
+    //
+    // * `base_url` - The base URL of the PANW AI Runtime security API endpoint
+    // * `api_key` - Palo Alto Networks API token for accessing the security services
+    // * `profile_name` - Name of the AI security profile to use for assessments
+    // * `app_name` - Name of the application using this security client
+    // * `app_user` - Identifier for the user or context within the application
+    pub fn new(
         base_url: &str,
         api_key: &str,
         profile_name: &str,
@@ -138,9 +138,48 @@ impl SecurityClient {
         }
     }
 
-// Creates a default safe assessment for empty content.
-//
-// This is an optimization to avoid unnecessary API calls for empty content.
+    // Performs a security assessment on the provided content using PANW AI Runtime API.
+    //
+    // # Arguments
+    //
+    // * `content` - The text content to assess with PANW AI Runtime API
+    // * `model_name` - Name of the AI model associated with this content
+    // * `is_prompt` - If `true`, content is treated as a prompt to an AI; if `false`, as an AI response
+    //
+    // # Returns
+    //
+    // Security assessment results
+    //
+    // # Errors
+    //
+    // Returns error if assessment fails or content is blocked by security policy
+    pub async fn assess_content(
+        &self,
+        content: &str,
+        model_name: &str,
+        is_prompt: bool,
+    ) -> Result<Assessment, SecurityError> {
+        // Optimization: Skip assessment for empty content
+        if content.trim().is_empty() {
+            debug!("Skipping PANW assessment for empty content");
+            return Ok(self.create_safe_assessment());
+        }
+
+        // Prepare content for assessment
+        let content_obj = self.prepare_content(content, is_prompt)?;
+        debug!("Prepared content for PANW assessment: {:#?}", content_obj);
+
+        // Create and send the request payload
+        let payload = self.create_scan_request(content_obj, model_name);
+        let scan_result = self.send_security_request(&payload).await?;
+
+        // Process results
+        self.process_scan_result(scan_result)
+    }
+
+    // Creates a default safe assessment for empty content.
+    //
+    // This is an optimization to avoid unnecessary API calls for empty content.
     fn create_safe_assessment(&self) -> Assessment {
         Assessment {
             is_safe: true,
@@ -150,14 +189,14 @@ impl SecurityClient {
         }
     }
 
-// Extracts code blocks from text using simple Markdown parsing.
+    // Extracts code blocks from text using simple Markdown parsing.
     //
-// # Arguments
+    // # Arguments
     //
     // * `content` - The text to extract code blocks from
     //
-// # Returns
-//
+    // # Returns
+    //
     // String containing all extracted code blocks concatenated together
     fn extract_code_blocks(&self, content: &str) -> String {
         let mut code_content = String::new();
@@ -191,29 +230,26 @@ impl SecurityClient {
         code_content
     }
 
-// Prepares a Content object for PANW assessment based on the provided text.
-//
-// # Arguments
-//
-// * `content` - The text content to be assessed
+    // Prepares a Content object for PANW assessment based on the provided text.
+    //
+    // # Arguments
+    //
+    // * `content` - The text content to be assessed
     // * `is_prompt` - If true, content is treated as a prompt; otherwise as a response
-//
-// # Returns
-//
-// Structured Content object ready for assessment
+    //
+    // # Returns
+    //
+    // Structured Content object ready for assessment
     fn prepare_content(&self, content: &str, is_prompt: bool) -> Result<Content, SecurityError> {
         // Extract any code blocks
         let code_blocks = self.extract_code_blocks(content);
+        let has_code = !code_blocks.is_empty();
 
-        if is_prompt {
+        let content_obj = if is_prompt {
             Content::new(
                 Some(content.to_string()),
                 None,
-                if !code_blocks.is_empty() {
-                    Some(code_blocks)
-                } else {
-                    None
-                },
+                if has_code { Some(code_blocks) } else { None },
                 None,
             )
         } else {
@@ -221,28 +257,27 @@ impl SecurityClient {
                 None,
                 Some(content.to_string()),
                 None,
-                if !code_blocks.is_empty() {
-                    Some(code_blocks)
-                } else {
-                    None
-                },
+                if has_code { Some(code_blocks) } else { None },
             )
-        }
-        .map_err(|e| SecurityError::AssessmentError(e.to_string()))
+        };
+
+        content_obj.map_err(|e| SecurityError::AssessmentError(e.to_string()))
     }
 
-// Processes scan results from the PANW AI Runtime API into an Assessment.
-//
-// # Arguments
-//
-// * `scan_result` - The scan response from the PANW AI Runtime API
-//
-// # Returns
-//
-// Assessment object with security evaluation results
+    // Processes scan results from the PANW AI Runtime API into an Assessment.
+    //
+    // # Arguments
+    //
+    // * `scan_result` - The scan response from the PANW AI Runtime API
+    //
+    // # Returns
+    //
+    // Assessment object with security evaluation results
     fn process_scan_result(&self, scan_result: ScanResponse) -> Result<Assessment, SecurityError> {
+        let is_safe = scan_result.category == "benign" && scan_result.action != "block";
+
         let assessment = Assessment {
-            is_safe: scan_result.category == "benign" && scan_result.action != "block",
+            is_safe,
             category: scan_result.category.clone(),
             action: scan_result.action.clone(),
             details: scan_result,
@@ -250,61 +285,23 @@ impl SecurityClient {
 
         if !assessment.is_safe {
             warn!(
-                "PANW Security threat detected! Category: {}, Findings: {:#?}",
-                assessment.category, assessment.details.prompt_detected
+                "PANW Security threat detected! Category: {}, Action: {}, Findings: {:#?}",
+                assessment.category, assessment.action, assessment.details
             );
+        } else {
+            debug!("PANW Security assessment passed: benign content");
         }
 
         Ok(assessment)
     }
 
-// Performs a security assessment on the provided content using PANW AI Runtime API.
+    // Creates a scan request payload for the PANW AI Runtime API.
     //
     // # Arguments
-//
-// * `content` - The text content to assess with PANW AI Runtime API
-// * `model_name` - Name of the AI model associated with this content
-// * `is_prompt` - If `true`, content is treated as a prompt to an AI; if `false`, as an AI response
-//
-// # Returns
     //
-    // Security assessment results
-    //
-    // # Errors
-    //
-    // Returns error if assessment fails or content is blocked by security policy
-    pub async fn assess_content(
-        &self,
-        content: &str,
-        model_name: &str,
-        is_prompt: bool,
-    ) -> Result<Assessment, SecurityError> {
-        // Optimization: Skip assessment for empty content
-        if content.trim().is_empty() {
-            debug!("Skipping PANW assessment for empty content");
-            return Ok(self.create_safe_assessment());
-        }
-
-        // Prepare content for assessment
-        let content_obj = self.prepare_content(content, is_prompt)?;
-
-        info!("Prepared content for PANW assessment: {:#?}", content_obj);
-
-        // Create and send the request payload
-        let payload = self.create_scan_request(content_obj, model_name);
-        let scan_result = self.send_security_request(&payload).await?;
-
-        // Process results
-        self.process_scan_result(scan_result)
-    }
-
-// Creates a scan request payload for the PANW AI Runtime API.
-    //
-    // # Arguments
-//
-// * `content_obj` - Content object containing text to assess
-// * `model_name` - Name of the AI model associated with this content
-        fn create_scan_request(&self, content_obj: Content, model_name: &str) -> ScanRequest {
+    // * `content_obj` - Content object containing text to assess
+    // * `model_name` - Name of the AI model associated with this content
+    fn create_scan_request(&self, content_obj: Content, model_name: &str) -> ScanRequest {
         ScanRequest {
             tr_id: Uuid::new_v4().to_string(),
             ai_profile: AiProfile {
@@ -319,22 +316,42 @@ impl SecurityClient {
         }
     }
 
-// Makes an HTTP request to the PANW AI Runtime API.
+    // Sends a security assessment request to the PANW AI Runtime API and processes the response.
     //
     // # Arguments
-//
-// * `payload` - The request payload to send
     //
-// # Returns
-//
-// Status code and response body from the API
-        async fn make_api_request(
+    // * `payload` - The request payload to send
+    //
+    // # Returns
+    //
+    // Parsed scan response from the API
+    async fn send_security_request(
+        &self,
+        payload: &ScanRequest,
+    ) -> Result<ScanResponse, SecurityError> {
+        let (status, body_text) = self.make_api_request(payload).await?;
+        self.parse_api_response(status, body_text)
+    }
+
+    // Makes an HTTP request to the PANW AI Runtime API.
+    //
+    // # Arguments
+    //
+    // * `payload` - The request payload to send
+    //
+    // # Returns
+    //
+    // Status code and response body from the API
+    async fn make_api_request(
         &self,
         payload: &ScanRequest,
     ) -> Result<(reqwest::StatusCode, String), SecurityError> {
+        let endpoint = format!("{}/v1/scan/sync/request", self.base_url);
+        debug!("Sending security assessment request to: {}", endpoint);
+
         let response = self
             .client
-            .post(&format!("{}/v1/scan/sync/request", self.base_url))
+            .post(&endpoint)
             .header("Content-Type", "application/json")
             .header("x-pan-token", &self.api_key)
             .json(payload)
@@ -354,54 +371,38 @@ impl SecurityClient {
         Ok((status, body_text))
     }
 
-// Parses the PANW AI Runtime API response and handles different status codes.
+    // Parses the PANW AI Runtime API response and handles different status codes.
     //
     // # Arguments
-//
-// * `status` - The HTTP status code from the API response
-// * `body_text` - The raw response body text
-//
-// # Returns
-//
-// Parsed scan response object
+    //
+    // * `status` - The HTTP status code from the API response
+    // * `body_text` - The raw response body text
+    //
+    // # Returns
+    //
+    // Parsed scan response object
     fn parse_api_response(
         &self,
         status: reqwest::StatusCode,
         body_text: String,
     ) -> Result<ScanResponse, SecurityError> {
         // Log the raw response in debug mode
+        debug!("PANW API response status: {}", status);
         debug!("Raw PANW response body:\n{}", body_text);
 
-// Handle error status codes
+        // Handle error status codes
         if !status.is_success() {
             error!("PANW security assessment error: {} - {}", status, body_text);
             return Err(SecurityError::AssessmentError(format!(
-                "{}: {}",
+                "Status {}: {}",
                 status, body_text
             )));
         }
 
-// Parse JSON response
+        // Parse JSON response
         serde_json::from_str(&body_text).map_err(|e| {
-            error!("Failed to parse PANW security assessment response");
+            error!("Failed to parse PANW security assessment response: {}", e);
             SecurityError::JsonError(e)
         })
-    }
-
-// Sends a security assessment request to the PANW AI Runtime API and processes the response.
-    //
-    // # Arguments
-    //
-    // * `payload` - The request payload to send
-    //
-    // # Returns
-    //
-    // Parsed scan response from the API
-    async fn send_security_request(
-        &self,
-        payload: &ScanRequest,
-    ) -> Result<ScanResponse, SecurityError> {
-        let (status, body_text) = self.make_api_request(payload).await?;
-        self.parse_api_response(status, body_text)
     }
 }
