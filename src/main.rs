@@ -1,3 +1,9 @@
+// panw-api-ollama: A secure proxy for Ollama API with PANW AI security integration
+//
+// This service wraps the Ollama API and provides content security scanning using
+// Palo Alto Networks' AI Runtime API before forwarding requests to Ollama.
+
+// Module declarations with descriptive comments
 // Configuration loading and management.
 mod config;
 
@@ -16,19 +22,30 @@ mod stream;
 // Common type definitions used throughout the application.
 mod types;
 
+// Import declarations with logical grouping
+// Internal crate imports
 use crate::handlers::*;
 use crate::ollama::OllamaClient;
 use crate::security::SecurityClient;
+
+// Web framework imports
 use axum::{
     routing::{get, post},
     Router,
 };
+
+// Standard library imports
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
+
+// Middleware and utility imports
 use tower_http::trace::TraceLayer;
 use tracing::info;
 
 // Shared application state containing clients for external services.
+//
+// This state is cloned and passed to each request handler, providing
+// access to the Ollama client and security assessment functionality.
 #[derive(Clone)]
 pub struct AppState {
     ollama_client: OllamaClient,
@@ -43,6 +60,9 @@ impl AppState {
 }
 
 // Builder for creating AppState instances with a fluent API.
+//
+// This builder follows the builder pattern to provide a clean interface
+// for initializing the application state with required components.
 #[derive(Default)]
 pub struct AppStateBuilder {
     ollama_client: Option<OllamaClient>,
@@ -63,6 +83,10 @@ impl AppStateBuilder {
     }
 
     // Builds the AppState from the configured components.
+    //
+    // # Errors
+    //
+    // Returns an error if any required component is missing.
     pub fn build(self) -> Result<AppState, &'static str> {
         let ollama_client = self.ollama_client.ok_or("OllamaClient is required")?;
         let security_client = self.security_client.ok_or("SecurityClient is required")?;
@@ -109,8 +133,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Build router with all the Ollama API endpoints
     let app = Router::new()
+        // Generation endpoints
         .route("/api/generate", post(generate::handle_generate))
         .route("/api/chat", post(chat::handle_chat))
+        .route("/api/embeddings", post(embeddings::handle_embeddings))
+        
+        // Model management endpoints
         .route("/api/tags", get(models::handle_list_models))
         .route("/api/show", post(models::handle_show_model))
         .route("/api/create", post(models::handle_create_model))
@@ -118,12 +146,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/delete", post(models::handle_delete_model))
         .route("/api/pull", post(models::handle_pull_model))
         .route("/api/push", post(models::handle_push_model))
-        .route("/api/embeddings", post(embeddings::handle_embeddings))
+        
+        // Utility endpoints
         .route("/api/version", get(version::handle_version))
+        
+        // Middleware and state
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
-    // Start the server using the new Axum 0.7 API
+    // Start the server using the Axum 0.7 API
     let addr = SocketAddr::new(IpAddr::from_str(&config.server.host)?, config.server.port);
     info!("Listening on {}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
