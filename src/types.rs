@@ -293,7 +293,7 @@ pub struct Metadata {
 //
 // * `prompt` - Optional text representing a prompt to an AI model
 // * `response` - Optional text representing a response from an AI model
-// * `code_prompt`: Extracted code blocks from prompt (Markdown ```
+// * `code_prompt`: Extracted code blocks from prompt (Markdown ``` blocks)
 // * `code_response`: Extracted code blocks from response (Markdown ``` blocks) 
 #[derive(Debug, Clone, Serialize)]
 pub struct Content {
