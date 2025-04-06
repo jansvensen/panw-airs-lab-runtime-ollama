@@ -23,21 +23,8 @@ use crate::handlers::utils::{
     handle_streaming_request, log_security_failure,
 };
 use crate::handlers::ApiError;
-use crate::stream::SecurityAssessable;
 use crate::types::{ChatRequest, ChatResponse, Message};
 use crate::AppState;
-
-//------------------------------------------------------------------------------
-// Type Implementations
-//------------------------------------------------------------------------------
-
-// Implementation of SecurityAssessable for ChatResponse to facilitate
-// security scanning of streaming responses.
-impl SecurityAssessable for crate::types::ChatResponse {
-    fn get_content_for_assessment(&self) -> Option<(&str, &str)> {
-        Some((&self.message.content, "chat_response"))
-    }
-}
 
 //------------------------------------------------------------------------------
 // Public API
@@ -62,10 +49,10 @@ impl SecurityAssessable for crate::types::ChatResponse {
 // * `Err(ApiError)` - If an error occurs during processing
 pub async fn handle_chat(
     State(state): State<AppState>,
-    Json(mut request): Json<ChatRequest>,
+    Json(request): Json<ChatRequest>,
 ) -> Result<Response, ApiError> {
     // Ensure stream parameter is always set
-    request.stream = Some(false);
+    // request.stream = Some(false);
 
     info!("Received chat request for model: {}", request.model);
     debug!(

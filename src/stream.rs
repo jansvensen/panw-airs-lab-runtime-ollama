@@ -1,294 +1,253 @@
-// Streaming functionality with security assessment integration.
-//
-// This module provides streaming support for the API proxy, with integrated
-// security assessment of streamed content from Ollama API.
-//
-// # Module Overview
-//
-// The stream module implements:
-// - A wrapper for streams that performs security assessments on each item
-// - Real-time content filtering based on security policies
-// - Support for streaming API responses with security checks
-use crate::security::SecurityClient;
+use crate::{
+    security::{Assessment, SecurityClient},
+    types::StreamError,
+};
 use bytes::Bytes;
-use futures_util::Stream;
-use serde::{de::DeserializeOwned, Serialize};
-use std::pin::Pin;
-use std::task::{Context, Poll};
-use thiserror::Error;
-use tracing::{debug, error, warn};
+use futures_util::{ready, Future, Stream};
+use pin_project::pin_project;
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
+};
 
-// Errors that can occur during stream processing
-//
-// This enum represents various error conditions that may occur when
-// processing streaming responses, including JSON parsing issues and
-// security assessment failures.
-#[derive(Debug, Error)]
-pub enum StreamError {
-    // JSON parsing errors when handling streaming data
-    #[error("Failed to parse JSON: {0}")]
-    JsonError(#[from] serde_json::Error),
-
-    // Security assessment errors in streaming content
-    #[error("Security assessment failed: {0}")]
-    SecurityError(#[from] crate::security::SecurityError),
-
-    // Unknown errors with no specific details
-    #[error("Unknown error occurred during stream processing")]
-    Unknown,
+// Content struct for assessment
+pub struct Content<'a> {
+    pub prompt: Option<&'a str>,
+    pub response: Option<&'a str>,
+    pub code_prompt: Option<&'a str>,
+    pub code_response: Option<&'a str>,
 }
 
-// Trait for types that can have their content assessed for security issues.
-//
-// This trait is implemented by response types that contain content that
-// should be assessed by the PANW AI Runtime security API.
-//
-// # Examples
-//
-// ```
-// impl SecurityAssessable for ChatResponse {
-//     fn get_content_for_assessment(&self) -> Option<(&str, &str)> {
-//         Some((&self.message.content, "chat_response"))
-//     }
-// }
-// ```
-pub trait SecurityAssessable {
-    // Returns content to be assessed and its type.
-    //
-    // # Returns
-    //
-    // A tuple containing:
-    // - The content to be assessed
-    // - A string identifying the type of content (e.g., "chat_response", "prompt")
-    fn get_content_for_assessment(&self) -> Option<(&str, &str)>;
+#[derive(Debug)]
+struct StreamBuffer {
+    text_buffer: String,
+    code_buffer: String,
+    in_code_block: bool,
+    read_pos: usize,
+    assessment_window: usize, // Increased window size
 }
 
-// A stream wrapper that performs security assessments on each streamed item.
-//
-// This wrapper intercepts items from the underlying stream, performs
-// security assessments on them, and either passes them through if they're
-// safe or replaces them with a security violation message.
-pub struct SecurityAssessedStream<S, T>
-where
-    S: Stream<Item = Result<Bytes, StreamError>> + Unpin,
-    T: DeserializeOwned + SecurityAssessable + Serialize + Send + Sync + 'static,
-{
-    // The underlying stream of bytes
-    inner: Pin<Box<S>>,
-
-    // Client for performing security assessments
-    security_client: SecurityClient,
-
-    // Model name for security assessments
-    model_name: String,
-
-    // Buffer for items being processed
-    buffer: Option<T>,
-
-    // Whether the stream has finished
-    finished: bool,
-}
-
-impl<S, T> SecurityAssessedStream<S, T>
-where
-    S: Stream<Item = Result<Bytes, StreamError>> + Unpin,
-    T: DeserializeOwned + SecurityAssessable + Serialize + Send + Sync + 'static,
-{
-    // Creates a new security-assessed stream.
-    //
-    // # Arguments
-    //
-    // * `stream` - The underlying stream to wrap
-    // * `security_client` - Client for performing security assessments
-    // * `model_name` - Name of the model generating the content
-    //
-    // # Returns
-    //
-    // A new SecurityAssessedStream that wraps the provided stream
-    pub fn new(stream: S, security_client: SecurityClient, model_name: String) -> Self {
-        debug!(
-            "Creating new security-assessed stream for model: {}",
-            model_name
-        );
+impl StreamBuffer {
+    fn new() -> Self {
         Self {
-            inner: Box::pin(stream),
+            text_buffer: String::new(),
+            code_buffer: String::new(),
+            in_code_block: false,
+            read_pos: 0,
+            assessment_window: 1000, // Increased to buffer more content
+        }
+    }
+
+    fn process(&mut self, chunk: &str) {
+        let processing_buffer = if self.in_code_block {
+            &mut self.code_buffer
+        } else {
+            &mut self.text_buffer
+        };
+
+        // Parse Ollama's JSON response chunk
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(chunk) {
+            if let Some(content) = json["message"]["content"].as_str() {
+                processing_buffer.push_str(content);
+            }
+        }
+
+        // Existing code block detection logic
+        self.detect_code_blocks();
+    }
+
+    fn detect_code_blocks(&mut self) {
+        let buffer = if self.in_code_block {
+            &self.code_buffer
+        } else {
+            &self.text_buffer
+        };
+
+        let mut backticks = 0;
+        for c in buffer.chars() {
+            if c == '`' {
+                backticks += 1;
+                if backticks == 3 {
+                    self.in_code_block = !self.in_code_block;
+                    backticks = 0;
+                }
+            } else {
+                backticks = 0;
+            }
+        }
+    }
+
+    fn prepare_assessment_content(&self) -> Content {
+        Content {
+            prompt: None,
+            response: Some(&self.text_buffer),
+            code_prompt: None,
+            code_response: if !self.code_buffer.is_empty() {
+                Some(&self.code_buffer)
+            } else {
+                None
+            },
+        }
+    }
+
+    fn get_assessable_chunk(&self) -> Option<Content> {
+        if self.text_buffer.len() >= self.assessment_window
+            || self.code_buffer.len() >= self.assessment_window
+            || !self.in_code_block
+        {
+            Some(self.prepare_assessment_content())
+        } else {
+            None
+        }
+    }
+
+    fn get_text_content(&self) -> String {
+        // Combine text and code buffer for security assessment
+        let mut full_content = self.text_buffer.clone();
+        if !self.code_buffer.is_empty() {
+            if !full_content.is_empty() {
+                full_content.push_str("\n\n");
+            }
+            full_content.push_str("```");
+            full_content.push_str(&self.code_buffer);
+            full_content.push_str("\n```");
+        }
+        full_content
+    }
+
+    fn commit(&mut self, is_safe: bool) {
+        // If content is safe, we can reset buffers or handle accordingly
+        if is_safe {
+            self.read_pos = self.text_buffer.len();
+        }
+        // If not safe, we keep buffers as is to potentially modify them
+    }
+}
+
+#[pin_project]
+pub struct SecurityAssessedStream<S>
+where
+    S: Stream<Item = Result<Bytes, reqwest::Error>>,
+{
+    #[pin]
+    inner: S,
+    security_client: SecurityClient,
+    model_name: String,
+    buffer: StreamBuffer,
+    assessment_fut: Option<Pin<Box<dyn Future<Output = Result<Assessment, StreamError>> + Send>>>,
+    finished: bool,
+    retry_count: u32,
+}
+
+impl<S> SecurityAssessedStream<S>
+where
+    S: Stream<Item = Result<Bytes, reqwest::Error>>,
+{
+    pub fn new(inner: S, security_client: SecurityClient, model_name: String) -> Self {
+        Self {
+            inner,
             security_client,
             model_name,
-            buffer: None,
+            buffer: StreamBuffer::new(),
+            assessment_fut: None,
             finished: false,
-        }
-    }
-
-    // Creates a formatted message for blocked content.
-    //
-    // This generates a user-friendly message explaining why the content
-    // was blocked, including the security category and action.
-    //
-    // # Arguments
-    //
-    // * `category` - The security category of the violation
-    // * `action` - The recommended action for the violation
-    //
-    // # Returns
-    //
-    // A bytes object containing the formatted message as JSON
-    fn create_blocked_response(&self, category: &str, action: &str) -> Bytes {
-        debug!(
-            "Creating blocked response for category: {}, action: {}",
-            category, action
-        );
-
-        // Format the blocking message
-        let blocked_message = format!(
-            "⚠️ This response was blocked due to security policy violations:\n\n\
-             • Category: {}\n\
-             • Action: {}\n\n\
-             Please reformulate your request to comply with security policies.",
-            category, action
-        );
-
-        // Create a standard response structure
-        let response = serde_json::json!({
-            "model": self.model_name,
-            "created_at": chrono::Utc::now().to_rfc3339(),
-            "message": {
-                "role": "assistant",
-                "content": blocked_message
-            },
-            "done": true
-        });
-
-        // Convert to bytes
-        let json_bytes = serde_json::to_vec(&response).unwrap_or_else(|e| {
-            error!("Failed to serialize blocked response: {}", e);
-            blocked_message.as_bytes().to_vec()
-        });
-
-        Bytes::from(json_bytes)
-    }
-
-    // Assesses content for security issues.
-    //
-    // This method performs a synchronous security assessment of the content
-    // and returns a blocked response if the content violates security policies.
-    //
-    // # Arguments
-    //
-    // * `content` - The content to assess
-    // * `content_type` - The type of content (e.g., "prompt", "chat_response")
-    //
-    // # Returns
-    //
-    // * `Some(Bytes)` - If the content violates security policies, a formatted blocked response
-    // * `None` - If the content is safe or couldn't be assessed
-    fn assess_content(&self, content: &str, content_type: &str) -> Option<Bytes> {
-        debug!("Assessing content of type: {}", content_type);
-
-        // Determine if this is a prompt
-        let is_prompt = content_type.contains("prompt");
-
-        // Perform the assessment synchronously to avoid threading issues
-        match futures::executor::block_on(async {
-            self.security_client
-                .assess_content(content, &self.model_name, is_prompt)
-                .await
-        }) {
-            Ok(assessment) if !assessment.is_safe => {
-                // Content is blocked, return a formatted message
-                warn!(
-                    "Security violation detected in stream: category={}, action={}",
-                    assessment.category, assessment.action
-                );
-                Some(self.create_blocked_response(&assessment.category, &assessment.action))
-            }
-            Ok(_) => {
-                // Content is safe
-                debug!("Content passed security assessment");
-                None
-            }
-            Err(e) => {
-                // Error during assessment, continue with original content
-                error!("Failed to assess content: {}", e);
-                None
-            }
+            retry_count: 0,
         }
     }
 }
 
-impl<S, T> Stream for SecurityAssessedStream<S, T>
+fn create_blocked_response(category: &str, action: &str) -> Bytes {
+    Bytes::from(format!(
+        "BLOCKED - Category: {}, Action: {}",
+        category, action
+    ))
+}
+
+impl<S> Stream for SecurityAssessedStream<S>
 where
-    S: Stream<Item = Result<Bytes, StreamError>> + Unpin,
-    T: DeserializeOwned + SecurityAssessable + Serialize + Unpin + Send + Sync + 'static,
+    S: Stream<Item = Result<Bytes, reqwest::Error>> + Unpin,
 {
     type Item = Result<Bytes, StreamError>;
 
-    // Polls for the next item in the stream.
-    //
-    // This implementation:
-    // 1. Checks if there are any buffered items and returns them first
-    // 2. Polls the underlying stream for the next item
-    // 3. If an item is available, parses it and performs a security assessment
-    // 4. Either passes the item through or replaces it with a blocked response
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // Handle finished state
-        if self.finished {
-            return Poll::Ready(None);
-        }
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let mut this = self.project();
 
-        // Process any buffered items first
-        if let Some(item) = self.buffer.take() {
-            match serde_json::to_vec(&item) {
-                Ok(json) => return Poll::Ready(Some(Ok(Bytes::from(json)))),
-                Err(e) => {
-                    error!("Failed to serialize buffered item: {}", e);
-                    return Poll::Ready(Some(Err(StreamError::JsonError(e))));
+        loop {
+            if *this.finished {
+                return Poll::Ready(None);
+            }
+
+            // Process pending security assessments
+            if let Some(fut) = this.assessment_fut.as_mut() {
+                match fut.as_mut().poll(cx) {
+                    Poll::Ready(Ok(assessment)) => {
+                        if !assessment.is_safe {
+                            let blocked =
+                                create_blocked_response(&assessment.category, &assessment.action);
+                            *this.retry_count = 0;
+                            return Poll::Ready(Some(Ok(blocked)));
+                        }
+                        this.buffer.commit(true);
+                        this.assessment_fut.take();
+                    }
+                    Poll::Ready(Err(e)) => {
+                        this.assessment_fut.take();
+                        return Poll::Ready(Some(Err(e)));
+                    }
+                    Poll::Pending => return Poll::Pending,
                 }
             }
-        }
 
-        // Poll the inner stream
-        match self.inner.as_mut().poll_next(cx) {
-            Poll::Ready(Some(Ok(bytes))) => {
-                // Try to parse the bytes
-                match serde_json::from_slice::<T>(&bytes) {
-                    Ok(chunk) => {
-                        // Check if there's content to assess
-                        if let Some((content, content_type)) = chunk.get_content_for_assessment() {
-                            if !content.is_empty() {
-                                debug!(
-                                    "Processing stream chunk with content of type: {}",
-                                    content_type
-                                );
+            // Process incoming stream chunks
+            match ready!(this.inner.as_mut().poll_next(cx)) {
+                Some(Ok(bytes)) => {
+                    if let Ok(chunk) = std::str::from_utf8(&bytes) {
+                        this.buffer.process(chunk);
 
-                                // Assess content for security issues
-                                if let Some(blocked_response) =
-                                    self.assess_content(content, content_type)
-                                {
-                                    // Content blocked - return blocked response
-                                    self.finished = true; // End the stream after sending the blocked response
-                                    return Poll::Ready(Some(Ok(blocked_response)));
-                                }
-                            }
+                        if let Some(_content) = this.buffer.get_assessable_chunk() {
+                            let client = this.security_client.clone();
+                            let model = this.model_name.clone();
+                            let content_text = this.buffer.get_text_content();
+
+                            *this.assessment_fut = Some(Box::pin(async move {
+                                client
+                                    .assess_content(&content_text, &model, false)
+                                    .await
+                                    .map_err(|e| StreamError::SecurityError(e.to_string()))
+                            }));
+
+                            cx.waker().wake_by_ref();
+                            return Poll::Pending;
                         }
 
-                        // If we reach here, content is safe or couldn't be assessed
-                        Poll::Ready(Some(Ok(bytes)))
-                    }
-                    Err(e) => {
-                        error!("Failed to parse JSON in stream: {}", e);
-                        Poll::Ready(Some(Err(StreamError::JsonError(e))))
+                        // Forward chunk if no immediate assessment needed
+                        return Poll::Ready(Some(Ok(bytes)));
                     }
                 }
+                Some(Err(e)) => {
+                    return Poll::Ready(Some(Err(StreamError::NetworkError(e.to_string()))));
+                }
+                None => {
+                    // Final assessment on stream end
+                    if let Some(_content) = this.buffer.get_assessable_chunk() {
+                        let client = this.security_client.clone();
+                        let model = this.model_name.clone();
+                        let content_text = this.buffer.get_text_content();
+
+                        *this.assessment_fut = Some(Box::pin(async move {
+                            client
+                                .assess_content(&content_text, &model, false)
+                                .await
+                                .map_err(|e| StreamError::SecurityError(e.to_string()))
+                        }));
+
+                        *this.finished = true;
+                        cx.waker().wake_by_ref();
+                        return Poll::Pending;
+                    }
+                    return Poll::Ready(None);
+                }
             }
-            Poll::Ready(Some(Err(e))) => {
-                error!("Error from inner stream: {:?}", e);
-                Poll::Ready(Some(Err(e)))
-            }
-            Poll::Ready(None) => {
-                debug!("Inner stream completed");
-                Poll::Ready(None)
-            }
-            Poll::Pending => Poll::Pending,
         }
     }
 }
