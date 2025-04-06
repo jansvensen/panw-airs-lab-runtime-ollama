@@ -1,10 +1,3 @@
-pub mod chat;
-pub mod embeddings;
-pub mod generate;
-pub mod models;
-pub mod utils;
-pub mod version;
-
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -13,51 +6,72 @@ use axum::{
 use serde_json::json;
 use tracing::error;
 
+pub mod chat;
+pub mod embeddings;
+pub mod generate;
+pub mod models;
+pub mod utils;
+pub mod version;
+
+// Custom error types for API request handling.
+//
+// This enum represents the various error conditions that can occur
+// when handling API requests. It consolidates errors from the Ollama client,
+// security assessment, and internal server issues into a unified error type
+// that can be converted into appropriate HTTP responses.
+#[derive(Debug, thiserror::Error)]
 pub enum ApiError {
-    OllamaError(crate::ollama::OllamaError),
-    SecurityError(crate::security::SecurityError),
+    // Errors from the Ollama backend service.
+    //
+    // These errors occur when communicating with the Ollama API,
+    // such as connection failures, timeouts, or invalid responses.
+    #[error("Ollama error: {0}")]
+    OllamaError(#[from] crate::ollama::OllamaError),
+    
+    // Errors from the security assessment system.
+    //
+    // These errors occur during content security scanning,
+    // including API failures or policy violations.
+    #[error("Security error: {0}")]
+    SecurityError(#[from] crate::security::SecurityError),
+    
+    // Internal server errors.
+    //
+    // General errors that occur within the application itself,
+    // not directly related to external services.
+    #[error("Internal error: {0}")]
     InternalError(String),
 }
 
 impl IntoResponse for ApiError {
+    // Converts an API error into an HTTP response.
+    //
+    // Maps each error type to an appropriate HTTP status code and
+    // formats the error message for the response body.
     fn into_response(self) -> Response {
+        // Map error types to appropriate status codes and messages
         let (status, error_message) = match self {
-            ApiError::OllamaError(err) => {
-                error!("Ollama error: {}", err);
-                (StatusCode::BAD_GATEWAY, format!("Ollama error: {}", err))
-            }
-            ApiError::SecurityError(err) => {
-                error!("Security error: {}", err);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Security error: {}", err),
-                )
-            }
+            ApiError::OllamaError(e) => {
+                error!("Ollama service error: {}", e);
+                (StatusCode::BAD_GATEWAY, format!("Ollama error: {}", e))
+            },
+            ApiError::SecurityError(e) => {
+                error!("Security assessment error: {}", e);
+                (StatusCode::INTERNAL_SERVER_ERROR, format!("Security error: {}", e))
+            },
             ApiError::InternalError(msg) => {
-                error!("Internal error: {}", msg);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Internal error: {}", msg),
-                )
-            }
+                error!("Internal server error: {}", msg);
+                (StatusCode::INTERNAL_SERVER_ERROR, msg)
+            },
         };
 
+        // Create a JSON response with the error message
         let body = Json(json!({
             "error": error_message,
+            "status": status.as_u16(),
         }));
-
+        
+        // Return the status code and body as a response
         (status, body).into_response()
-    }
-}
-
-impl From<crate::ollama::OllamaError> for ApiError {
-    fn from(err: crate::ollama::OllamaError) -> Self {
-        ApiError::OllamaError(err)
-    }
-}
-
-impl From<crate::security::SecurityError> for ApiError {
-    fn from(err: crate::security::SecurityError) -> Self {
-        ApiError::SecurityError(err)
     }
 }

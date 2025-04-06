@@ -1,12 +1,11 @@
-use axum::http::Method;
-use axum::{extract::State, response::Response, Json};
+use axum::{extract::State, http::Method, response::Response, Json};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use tracing::debug;
 
-use crate::handlers::utils::build_json_response;
-use crate::handlers::ApiError;
-use crate::AppState;
+use crate::{
+    handlers::{utils::build_json_response, ApiError},
+    AppState,
+};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ModelRequest {
@@ -17,7 +16,7 @@ pub struct ModelRequest {
     pub stream: Option<bool>,
 }
 
-// Represents the available Ollama API endpoints.
+#[derive(Debug)]
 pub enum OllamaEndpoint {
     Tags,
     Show,
@@ -86,7 +85,6 @@ async fn forward_to_ollama<T: Serialize>(
     } else {
         endpoint.log_prefix().to_string()
     };
-
     debug!("{}", log_message);
 
     // Forward the request
@@ -105,9 +103,9 @@ async fn forward_to_ollama<T: Serialize>(
         .bytes()
         .await
         .map_err(|e| ApiError::InternalError(e.to_string()))?;
-
     Ok(build_json_response(body_bytes)?)
 }
+
 // Handler for listing models (GET /api/tags)
 pub async fn handle_list_models(State(state): State<AppState>) -> Result<Response, ApiError> {
     forward_to_ollama::<()>(&state, OllamaEndpoint::Tags, None, None).await
@@ -130,7 +128,7 @@ pub async fn handle_show_model(
 // Handler for creating a model (POST /api/create)
 pub async fn handle_create_model(
     State(state): State<AppState>,
-    Json(request): Json<Value>,
+    Json(request): Json<ModelRequest>,
 ) -> Result<Response, ApiError> {
     forward_to_ollama(&state, OllamaEndpoint::Create, Some(&request), None).await
 }
@@ -138,7 +136,7 @@ pub async fn handle_create_model(
 // Handler for copying a model (POST /api/copy)
 pub async fn handle_copy_model(
     State(state): State<AppState>,
-    Json(request): Json<Value>,
+    Json(request): Json<ModelRequest>,
 ) -> Result<Response, ApiError> {
     forward_to_ollama(&state, OllamaEndpoint::Copy, Some(&request), None).await
 }
