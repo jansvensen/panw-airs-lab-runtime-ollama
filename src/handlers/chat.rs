@@ -145,7 +145,7 @@ async fn assess_chat_messages(
         }
     }
 
-    debug!("All messages passed security assessment");
+    info!("Prompt passed security assessment");
     Ok(Ok(()))
 }
 

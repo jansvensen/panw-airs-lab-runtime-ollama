@@ -104,6 +104,7 @@ async fn assess_generate_prompt(
         return Ok(Err(build_violation_response(response)?));
     }
 
+    info!("Prompt passed security assessment");
     Ok(Ok(()))
 }
 
