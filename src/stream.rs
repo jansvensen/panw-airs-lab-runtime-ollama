@@ -43,47 +43,107 @@ impl StreamBuffer {
     }
 
     fn process(&mut self, chunk: &str) {
-        let processing_buffer = if self.in_code_block {
-            &mut self.code_buffer
-        } else {
-            &mut self.text_buffer
-        };
-
         // Parse Ollama's JSON response chunk
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(chunk) {
             if let Some(content) = json["message"]["content"].as_str() {
-                processing_buffer.push_str(content);
+                // Look for code block markers in the incoming content
+                if content.contains("```") {
+                    // Contains a code block marker, need special processing
+                    let mut in_block = self.in_code_block;
+                    let parts: Vec<&str> = content.split("```").collect();
+
+                    for (i, part) in parts.iter().enumerate() {
+                        if i == 0 && !in_block {
+                            // First part before any code block
+                            if !part.is_empty() {
+                                self.text_buffer.push_str(part);
+                            }
+                        } else if i == 0 && in_block {
+                            // First part is continuation of a code block
+                            if !part.is_empty() {
+                                self.code_buffer.push_str(part);
+                            }
+                        } else if in_block {
+                            // This is code block content
+                            if !part.is_empty() {
+                                self.code_buffer.push_str(part);
+                            }
+                            in_block = false;
+                        } else {
+                            // This is regular text
+                            if !part.is_empty() {
+                                self.text_buffer.push_str(part);
+                            }
+                            in_block = true;
+                        }
+                    }
+
+                    // Update the code block state
+                    self.in_code_block = in_block;
+                } else {
+                    // No code block markers, add to the appropriate buffer
+                    if self.in_code_block {
+                        self.code_buffer.push_str(content);
+                    } else {
+                        self.text_buffer.push_str(content);
+                    }
+                }
             }
         }
-
-        // Detect code blocks
-        self.detect_code_blocks();
     }
 
     fn detect_code_blocks(&mut self) {
-        let buffer = if self.in_code_block {
+        // Look for triple backticks in the current active buffer
+        let active_buffer = if self.in_code_block {
             &self.code_buffer
         } else {
             &self.text_buffer
         };
 
-        let mut backticks = 0;
-        for c in buffer.chars() {
-            if c == '`' {
-                backticks += 1;
-                if backticks == 3 {
-                    self.in_code_block = !self.in_code_block;
-                    backticks = 0;
+        // Make a copy of the buffer to search to avoid borrow issues
+        let buffer_copy = active_buffer.clone();
+
+        // Find code block markers
+        if let Some(pos) = buffer_copy.find("```") {
+            if self.in_code_block {
+                // End of a code block
+                // Extract content before the marker and clear the buffer
+                let code_content = active_buffer[..pos].to_string();
+                if self.in_code_block {
+                    self.code_buffer.clear();
+                    self.code_buffer.push_str(&code_content);
+                }
+
+                // Add content after the marker to the text buffer
+                if pos + 3 < buffer_copy.len() {
+                    let remaining = &buffer_copy[pos + 3..];
+                    self.text_buffer.push_str(remaining);
                 }
             } else {
-                backticks = 0;
+                // Start of a code block
+                // Extract content before the marker
+                let text_content = active_buffer[..pos].to_string();
+                if !self.in_code_block {
+                    self.text_buffer.clear();
+                    self.text_buffer.push_str(&text_content);
+                }
+
+                // Add content after the marker to the code buffer
+                if pos + 3 < buffer_copy.len() {
+                    let remaining = &buffer_copy[pos + 3..];
+                    self.code_buffer.push_str(remaining);
+                }
             }
+
+            // Toggle code block state
+            self.in_code_block = !self.in_code_block;
         }
     }
 
     fn prepare_assessment_content(&self) -> Content {
         Content {
             prompt: None,
+            // Regular text should NOT include code blocks
             response: Some(&self.text_buffer),
             code_prompt: None,
             code_response: if !self.code_buffer.is_empty() {
@@ -132,7 +192,7 @@ impl StreamBuffer {
             if !full_content.is_empty() {
                 full_content.push_str("\n\n");
             }
-            full_content.push_str("```");
+            full_content.push_str("```\n");
             full_content.push_str(&self.code_buffer);
             full_content.push_str("\n```");
         }
@@ -226,7 +286,11 @@ where
             match ready!(this.inner.as_mut().poll_next(cx)) {
                 Some(Ok(bytes)) => {
                     if let Ok(chunk) = std::str::from_utf8(&bytes) {
+                        // Process the chunk which will now properly separate text and code
                         this.buffer.process(chunk);
+
+                        // Call detect_code_blocks to find and handle code block markers
+                        this.buffer.detect_code_blocks();
 
                         if let Some(_content) = this.buffer.get_assessable_chunk() {
                             // Assessment logic remains unchanged
@@ -243,7 +307,57 @@ where
                             return Poll::Pending;
                         }
 
-                        // Forward chunk if no immediate assessment needed
+                        // Create a modified response to ensure we keep text and code blocks separate
+                        if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(chunk) {
+                            if let Some(obj) = json["message"].as_object_mut() {
+                                if obj.contains_key("content") {
+                                    // Get the content string before we mutate json
+                                    let original_content =
+                                        if let Some(content_val) = obj.get("content") {
+                                            content_val.as_str().unwrap_or("").to_string()
+                                        } else {
+                                            "".to_string()
+                                        };
+
+                                    // If there's no actual content in this chunk, pass it through as-is
+                                    if original_content.trim().is_empty() {
+                                        return Poll::Ready(Some(Ok(bytes)));
+                                    }
+
+                                    // Check if this chunk has code block markers
+                                    if original_content.contains("```") {
+                                        // Process each part separately for cleaner separation
+                                        let parts: Vec<&str> =
+                                            original_content.split("```").collect();
+                                        if parts.len() > 1 {
+                                            // Has code block markers, provide clean separation
+                                            if !parts[0].trim().is_empty() {
+                                                // Regular text before code
+                                                obj["content"] =
+                                                    serde_json::Value::String(parts[0].to_string());
+                                                let text_result = serde_json::to_string(&json)
+                                                    .map(Bytes::from)
+                                                    .unwrap_or(bytes);
+                                                return Poll::Ready(Some(Ok(text_result)));
+                                            } else if parts.len() > 1 && !parts[1].trim().is_empty()
+                                            {
+                                                // Code content
+                                                obj["content"] = serde_json::Value::String(
+                                                    format!("```\n{}\n```", parts[1]),
+                                                );
+                                                obj["is_code"] = serde_json::Value::Bool(true);
+                                                let code_result = serde_json::to_string(&json)
+                                                    .map(Bytes::from)
+                                                    .unwrap_or(bytes);
+                                                return Poll::Ready(Some(Ok(code_result)));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // If we get here, just pass through the original bytes
                         return Poll::Ready(Some(Ok(bytes)));
                     }
                 }
