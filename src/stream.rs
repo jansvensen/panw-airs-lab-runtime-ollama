@@ -24,7 +24,9 @@ struct StreamBuffer {
     code_buffer: String,
     in_code_block: bool,
     read_pos: usize,
-    assessment_window: usize, // Increased window size
+    assessment_window: usize,
+    sentence_boundary_chars: &'static [char],
+    last_was_boundary: bool,
 }
 
 impl StreamBuffer {
@@ -34,7 +36,9 @@ impl StreamBuffer {
             code_buffer: String::new(),
             in_code_block: false,
             read_pos: 0,
-            assessment_window: 1000, // Increased to buffer more content
+            assessment_window: 1000,
+            sentence_boundary_chars: &['.', '!', '?', '\n'],
+            last_was_boundary: false,
         }
     }
 
@@ -52,7 +56,7 @@ impl StreamBuffer {
             }
         }
 
-        // Existing code block detection logic
+        // Detect code blocks
         self.detect_code_blocks();
     }
 
@@ -90,15 +94,35 @@ impl StreamBuffer {
         }
     }
 
-    fn get_assessable_chunk(&self) -> Option<Content> {
+    fn get_assessable_chunk(&mut self) -> Option<Content> {
+        // Now &mut self
+        // Always assess if we've accumulated a large amount of content
         if self.text_buffer.len() >= self.assessment_window
             || self.code_buffer.len() >= self.assessment_window
-            || !self.in_code_block
         {
-            Some(self.prepare_assessment_content())
-        } else {
-            None
+            return Some(self.prepare_assessment_content());
         }
+
+        // If we've completed a code block, assess it
+        if !self.in_code_block && !self.code_buffer.is_empty() {
+            return Some(self.prepare_assessment_content());
+        }
+
+        // Check for semantic boundaries in text
+        if !self.text_buffer.is_empty() {
+            let last_char = self.text_buffer.chars().last().unwrap_or(' ');
+            if self.sentence_boundary_chars.contains(&last_char)
+                && self.text_buffer.len() > 15
+                && !self.last_was_boundary
+            {
+                self.last_was_boundary = true; // Now allowed with mut self
+                return Some(self.prepare_assessment_content());
+            } else if !self.sentence_boundary_chars.contains(&last_char) {
+                self.last_was_boundary = false; // Now allowed
+            }
+        }
+
+        None
     }
 
     fn get_text_content(&self) -> String {
@@ -205,17 +229,16 @@ where
                         this.buffer.process(chunk);
 
                         if let Some(_content) = this.buffer.get_assessable_chunk() {
+                            // Assessment logic remains unchanged
                             let client = this.security_client.clone();
                             let model = this.model_name.clone();
                             let content_text = this.buffer.get_text_content();
-
                             *this.assessment_fut = Some(Box::pin(async move {
                                 client
                                     .assess_content(&content_text, &model, false)
                                     .await
                                     .map_err(|e| StreamError::SecurityError(e.to_string()))
                             }));
-
                             cx.waker().wake_by_ref();
                             return Poll::Pending;
                         }
@@ -230,18 +253,16 @@ where
                 None => {
                     // Final assessment on stream end
                     if let Some(_content) = this.buffer.get_assessable_chunk() {
+                        // Assessment logic remains unchanged
                         let client = this.security_client.clone();
                         let model = this.model_name.clone();
                         let content_text = this.buffer.get_text_content();
-
                         *this.assessment_fut = Some(Box::pin(async move {
                             client
                                 .assess_content(&content_text, &model, false)
                                 .await
                                 .map_err(|e| StreamError::SecurityError(e.to_string()))
                         }));
-
-                        *this.finished = true;
                         cx.waker().wake_by_ref();
                         return Poll::Pending;
                     }
