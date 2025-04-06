@@ -64,7 +64,7 @@ where
                 _ => "Error processing response",
             };
             let error_json = serde_json::json!({
-                "model": model_string, // Use the cloned string here
+                "model": model_string,
                 "error": error_message,
                 "done": true
             });
