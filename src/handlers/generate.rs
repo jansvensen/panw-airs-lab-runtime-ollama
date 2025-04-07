@@ -174,11 +174,13 @@ async fn handle_streaming_generate(
     debug!("Setting up streaming generate request");
 
     let model = request.model.clone();
+    // For streaming generate, we're dealing with responses from the LLM, so is_prompt should be false
     handle_streaming_request::<GenerateRequest, GenerateResponse>(
         &state,
         request,
         "/api/generate",
         &model,
+        false,
     )
     .await
 }

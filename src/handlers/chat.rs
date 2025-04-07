@@ -212,6 +212,13 @@ async fn handle_streaming_chat(
     debug!("Processing streaming chat request");
 
     let model = request.model.clone();
-    handle_streaming_request::<ChatRequest, ChatResponse>(&state, request, "/api/chat", &model)
-        .await
+    // For streaming chat, we're dealing with responses from the LLM, so is_prompt should be false
+    handle_streaming_request::<ChatRequest, ChatResponse>(
+        &state,
+        request,
+        "/api/chat",
+        &model,
+        false,
+    )
+    .await
 }

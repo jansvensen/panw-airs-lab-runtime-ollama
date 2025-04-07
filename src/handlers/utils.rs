@@ -26,6 +26,7 @@ pub async fn handle_streaming_request<T, R>(
     request: T,
     endpoint: &str,
     model: &str,
+    is_prompt: bool,
 ) -> Result<Response<Body>, ApiError>
 where
     T: Serialize + Send + 'static,
@@ -42,6 +43,7 @@ where
         converted_stream,
         state.security_client.clone(),
         model.to_string(),
+        is_prompt,
     );
 
     // Clone the model string for use in the closure

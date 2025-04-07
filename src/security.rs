@@ -358,17 +358,24 @@ impl SecurityClient {
         let code_blocks = self.extract_code_blocks(content);
         let has_code = !code_blocks.is_empty();
 
+        // Remove code blocks from the main content to avoid duplication
+        let text_content = if has_code {
+            self.remove_code_blocks(content)
+        } else {
+            content.to_string()
+        };
+
         // Use the builder pattern for creating content objects
         let builder = Content::builder();
 
         let content_builder = if is_prompt {
-            let mut builder = builder.with_prompt(content.to_string());
+            let mut builder = builder.with_prompt(text_content);
             if has_code {
                 builder = builder.with_code_prompt(code_blocks);
             }
             builder
         } else {
-            let mut builder = builder.with_response(content.to_string());
+            let mut builder = builder.with_response(text_content);
             if has_code {
                 builder = builder.with_code_response(code_blocks);
             }
@@ -378,6 +385,42 @@ impl SecurityClient {
         content_builder
             .build()
             .map_err(|e| SecurityError::AssessmentError(e.to_string()))
+    }
+
+    // Removes code blocks from text, keeping only non-code content
+    //
+    // This function removes all content between triple backtick (```) markers
+    // along with the markers themselves, returning only the non-code text.
+    //
+    // # Arguments
+    //
+    // * `content` - The text content to process
+    //
+    // # Returns
+    //
+    // A string with code blocks removed
+    fn remove_code_blocks(&self, content: &str) -> String {
+        let mut result = String::new();
+        let mut in_code_block = false;
+        
+        for line in content.lines() {
+            let trimmed = line.trim();
+            
+            // Check for code block delimiter
+            if trimmed.starts_with("```") {
+                in_code_block = !in_code_block;
+                // Don't add the delimiter line to the result
+                continue;
+            }
+            
+            // Only add lines that are not inside code blocks
+            if !in_code_block {
+                result.push_str(line);
+                result.push('\n');
+            }
+        }
+        
+        result
     }
 
     // Processes scan results from the PANW AI Runtime API into an Assessment.
