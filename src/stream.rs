@@ -11,6 +11,7 @@ use std::{
 };
 
 // Content struct for assessment
+#[allow(dead_code)]
 pub struct Content<'a> {
     pub prompt: Option<&'a str>,
     pub response: Option<&'a str>,
