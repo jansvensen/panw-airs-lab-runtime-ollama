@@ -24,9 +24,18 @@ struct StreamBuffer {
     code_buffer: String,
     in_code_block: bool,
     read_pos: usize,
+    output_buffer: Vec<Bytes>,        // General output buffer
+    text_buffer_complete: Vec<Bytes>, // Buffer for complete text responses
+    code_buffer_complete: Vec<Bytes>, // Buffer for complete code blocks
+    pending_buffer: Vec<Bytes>,       // Buffer for content waiting for assessment
     assessment_window: usize,
     sentence_boundary_chars: &'static [char],
     last_was_boundary: bool,
+    waiting_for_assessment: bool, // Flag indicating we're waiting for assessment
+    has_complete_text: bool,      // Flag indicating we have complete text
+    has_complete_code: bool,      // Flag indicating we have complete code
+    batch_ready: bool,            // Flag indicating a batch is ready to send
+    accumulating: bool,           // Flag indicating we're accumulating chunks
 }
 
 impl StreamBuffer {
@@ -36,9 +45,18 @@ impl StreamBuffer {
             code_buffer: String::new(),
             in_code_block: false,
             read_pos: 0,
+            output_buffer: Vec::new(),
+            text_buffer_complete: Vec::new(),
+            code_buffer_complete: Vec::new(),
+            pending_buffer: Vec::new(),
             assessment_window: 100000,
             sentence_boundary_chars: &['.', '!', '?', '\n'],
             last_was_boundary: false,
+            waiting_for_assessment: false,
+            has_complete_text: false,
+            has_complete_code: false,
+            batch_ready: false,
+            accumulating: false,
         }
     }
 
@@ -119,6 +137,9 @@ impl StreamBuffer {
                     let remaining = &buffer_copy[pos + 3..];
                     self.text_buffer.push_str(remaining);
                 }
+
+                // Mark that we have a complete code block
+                self.has_complete_code = true;
             } else {
                 // Start of a code block
                 // Extract content before the marker
@@ -205,8 +226,155 @@ impl StreamBuffer {
         // If content is safe, we can reset buffers or handle accordingly
         if is_safe {
             self.read_pos = self.text_buffer.len();
+            // Also clear the code buffer since it has been assessed
+            self.code_buffer.clear();
         }
         // If not safe, we keep buffers as is to potentially modify them
+    }
+
+    // Add chunk to the pending buffer instead of the output buffer
+    fn buffer_pending_chunk(&mut self, bytes: Bytes) {
+        self.pending_buffer.push(bytes);
+        self.waiting_for_assessment = true;
+    }
+
+    // Transform an incoming chunk to maintain all punctuation and code blocks
+    fn buffer_raw_chunk(&mut self, bytes: Bytes) {
+        // Always store the raw bytes to preserve all punctuation and formatting
+        self.output_buffer.push(bytes);
+    }
+
+    // Move all pending chunks to the appropriate buffer once assessment is complete
+    fn release_pending_chunks(&mut self) {
+        // First, find what kind of content we have in pending buffer
+        let mut has_code = false;
+
+        for bytes in &self.pending_buffer {
+            if let Ok(chunk) = std::str::from_utf8(bytes) {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(chunk) {
+                    if let Some(content) = json["message"]["content"].as_str() {
+                        if content.contains("```") || self.in_code_block {
+                            has_code = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Move pending chunks to the appropriate buffer based on content type
+        if has_code {
+            // Move to code buffer
+            for chunk in self.pending_buffer.drain(..) {
+                self.code_buffer_complete.push(chunk);
+            }
+            self.has_complete_code = true;
+        } else {
+            // Move to text buffer
+            for chunk in self.pending_buffer.drain(..) {
+                self.text_buffer_complete.push(chunk);
+            }
+            self.has_complete_text = true;
+        }
+
+        // Mark the content as ready to send
+        self.mark_batch_ready();
+        self.waiting_for_assessment = false;
+    }
+
+    // Check if we should release buffered content after processing
+    fn mark_batch_ready(&mut self) {
+        // If we have completed code blocks or text, mark the batch as ready
+        if self.has_complete_code || self.has_complete_text {
+            self.batch_ready = true;
+            self.accumulating = false;
+        }
+    }
+
+    // Create a single chunk from all accumulated content
+    fn create_complete_response(&mut self) -> Option<Bytes> {
+        let mut combined_data = Vec::new();
+
+        // If we have complete code, prioritize that
+        if self.has_complete_code {
+            // Combine all code chunks
+            for chunk in self.code_buffer_complete.drain(..) {
+                combined_data.extend_from_slice(&chunk);
+            }
+            self.has_complete_code = false;
+        } else if self.has_complete_text {
+            // Combine all text chunks
+            for chunk in self.text_buffer_complete.drain(..) {
+                combined_data.extend_from_slice(&chunk);
+            }
+            self.has_complete_text = false;
+        } else {
+            // Combine all general output chunks
+            for chunk in self.output_buffer.drain(..) {
+                combined_data.extend_from_slice(&chunk);
+            }
+        }
+
+        self.batch_ready = false;
+
+        if !combined_data.is_empty() {
+            Some(Bytes::from(combined_data))
+        } else {
+            None
+        }
+    }
+
+    // Get next chunk only if a complete batch is ready
+    fn get_next_chunk(&mut self) -> Option<Bytes> {
+        if self.batch_ready {
+            return self.create_complete_response();
+        }
+
+        // Not returning individual chunks - accumulate until batch is ready
+        None
+    }
+
+    // Determine content type from a chunk and buffer accordingly
+    fn buffer_content(&mut self, bytes: Bytes) {
+        // Start accumulating content
+        if !self.accumulating {
+            self.accumulating = true;
+        }
+
+        if let Ok(chunk) = std::str::from_utf8(&bytes) {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(chunk) {
+                if let Some(content) = json["message"]["content"].as_str() {
+                    // If content contains a code block marker, buffer it in code buffer
+                    if content.contains("```") || self.in_code_block {
+                        self.code_buffer_complete.push(bytes);
+                        // Only mark complete if we've reached the end of a code block
+                        if !self.in_code_block && !self.code_buffer.is_empty() {
+                            self.has_complete_code = true;
+                            // Mark batch as ready when we've got a complete code block
+                            self.mark_batch_ready();
+                        }
+                    } else {
+                        // Regular text content
+                        self.text_buffer_complete.push(bytes);
+
+                        // Check if this text chunk is a complete sentence
+                        if content.ends_with(".")
+                            || content.ends_with("!")
+                            || content.ends_with("?")
+                            || content.ends_with("\n")
+                        {
+                            self.has_complete_text = true;
+                            // Mark batch as ready when we've got complete text
+                            self.mark_batch_ready();
+                        }
+                    }
+                    return;
+                }
+            }
+        }
+
+        // If we couldn't determine the content type, add to the main output buffer
+        self.output_buffer.push(bytes);
     }
 }
 
@@ -249,12 +417,21 @@ fn create_security_assessment_future(
     let client = security_client.clone();
     let model = model_name.to_string();
 
-    // Create assessment future - pass the is_prompt flag to correctly identify the content type
+    // Create assessment future with appropriate content based on what we have
     Box::pin(async move {
-        client
-            .assess_content(&text_content, &model, is_prompt)
-            .await
-            .map_err(|e| StreamError::SecurityError(e.to_string()))
+        // If we have code content, include it in the assessment
+        if !code_content.is_empty() {
+            client
+                .assess_content_with_code(&text_content, &code_content, &model, is_prompt)
+                .await
+                .map_err(|e| StreamError::SecurityError(e.to_string()))
+        } else {
+            // Otherwise just assess the text
+            client
+                .assess_content(&text_content, &model, is_prompt)
+                .await
+                .map_err(|e| StreamError::SecurityError(e.to_string()))
+        }
     })
 }
 
@@ -295,20 +472,29 @@ where
         if !assessment.is_safe {
             let blocked = create_blocked_response(&assessment.category, &assessment.action);
             *retry_count = 0;
+            // Clear the pending buffer since we're not going to send these chunks
+            buffer.pending_buffer.clear();
+            buffer.waiting_for_assessment = false;
+            buffer.accumulating = false;
             return Some(Ok(blocked));
         }
 
         // Don't try to send content if the buffer is empty
-        if buffer.text_buffer.is_empty() {
+        if buffer.text_buffer.is_empty()
+            && buffer.code_buffer.is_empty()
+            && buffer.pending_buffer.is_empty()
+        {
             buffer.commit(true);
             return None;
         }
 
-        // Don't clear the text buffer - we still need to send the original chunks
-        // Just mark the content as safe to avoid sending it again
+        // Mark the content as safe by updating the read position and clearing code buffer
         buffer.commit(true);
-        
-        // We don't return a result here - we'll let the original chunks flow through
+
+        // Release all pending chunks now that assessment is complete
+        buffer.release_pending_chunks();
+
+        // We don't return a result here - we'll let the chunks flow through via get_next_chunk
         None
     }
 
@@ -324,7 +510,7 @@ where
         is_prompt: bool,
     ) -> Option<Result<Bytes, StreamError>> {
         if let Ok(chunk) = std::str::from_utf8(&bytes) {
-            // Process the chunk which will now properly separate text and code
+            // Process the chunk which will now properly separate text and code for assessment
             buffer.process(chunk);
 
             // Call detect_code_blocks to find and handle code block markers
@@ -338,83 +524,30 @@ where
                     model_name,
                     is_prompt,
                 ));
+                // Add to pending buffer when we're waiting for assessment
+                buffer.buffer_pending_chunk(bytes);
                 return None;
             }
 
-            // Transform the JSON response if needed - create a clone to avoid borrow issues
-            let bytes_clone = bytes.clone();
-            return Self::transform_json_response(chunk, bytes_clone);
-        }
-
-        // If we couldn't process as UTF-8, just pass through the original bytes
-        Some(Ok(bytes))
-    }
-
-    // Transform JSON response to separate text and code blocks
-    fn transform_json_response(chunk: &str, bytes: Bytes) -> Option<Result<Bytes, StreamError>> {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(chunk) {
-            // Process potential code blocks
-            if let Some(content) = json["message"]["content"].as_str() {
-                // Return the original bytes directly to preserve all characters including punctuation
-                if !content.contains("```") {
-                    return Some(Ok(bytes));
-                }
-
-                // Only do special processing for code blocks
-                if content.contains("```") {
-                    // Clone the json for processing since we need to modify it
-                    let json_clone = json.clone();
-                    let original_content = content.to_string();
-
-                    // If there's no actual content in this chunk, pass it through as-is
-                    if original_content.trim().is_empty() {
-                        return Some(Ok(bytes));
-                    }
-
-                    // Handle code block markers
-                    return Self::process_code_blocks(&original_content, json_clone);
-                }
+            // If we're waiting for assessment, continue buffering chunks until assessment completes
+            if buffer.waiting_for_assessment {
+                buffer.buffer_pending_chunk(bytes);
+            } else {
+                // Use our new buffer_content method to properly separate text and code
+                buffer.buffer_content(bytes);
             }
+
+            return None;
         }
 
-        // If we get here, just pass through the original bytes
-        Some(Ok(bytes))
-    }
-
-    // Process code blocks in content
-    fn process_code_blocks(
-        original_content: &str,
-        mut json: serde_json::Value,
-    ) -> Option<Result<Bytes, StreamError>> {
-        // Get the object reference inside the function to avoid borrowing issues
-        let obj = if let Some(obj) = json["message"].as_object_mut() {
-            obj
+        // If we couldn't process as UTF-8, add to appropriate buffer based on assessment status
+        if buffer.waiting_for_assessment {
+            buffer.buffer_pending_chunk(bytes);
         } else {
-            return Some(Ok(Bytes::new()));
-        };
-
-        // Process each part separately for cleaner separation
-        let parts: Vec<&str> = original_content.split("```").collect();
-        if parts.len() > 1 {
-            // Has code block markers, provide clean separation
-            if !parts[0].trim().is_empty() {
-                // Regular text before code
-                obj["content"] = serde_json::Value::String(parts[0].to_string());
-                if let Ok(text_json) = serde_json::to_string(&json) {
-                    return Some(Ok(Bytes::from(text_json)));
-                }
-            } else if parts.len() > 1 && !parts[1].trim().is_empty() {
-                // Code content
-                obj["content"] = serde_json::Value::String(format!("```\n{}\n```", parts[1]));
-                obj["is_code"] = serde_json::Value::Bool(true);
-                if let Ok(code_json) = serde_json::to_string(&json) {
-                    return Some(Ok(Bytes::from(code_json)));
-                }
-            }
+            buffer.buffer_raw_chunk(bytes);
         }
 
-        // Default to empty response if we couldn't process
-        Some(Ok(Bytes::new()))
+        None
     }
 
     // Process stream end and trigger final assessment if needed
@@ -450,6 +583,11 @@ where
     {
         let mut this = self.project();
 
+        // First check if we have any buffered chunks ready to return
+        if let Some(bytes) = this.buffer.get_next_chunk() {
+            return Poll::Ready(Some(Ok(bytes)));
+        }
+
         loop {
             if *this.finished {
                 return Poll::Ready(None);
@@ -467,6 +605,10 @@ where
                         ) {
                             return Poll::Ready(Some(result));
                         }
+                        // After processing assessment, check if we have buffered chunks to return
+                        if let Some(bytes) = this.buffer.get_next_chunk() {
+                            return Poll::Ready(Some(Ok(bytes)));
+                        }
                     }
                     Poll::Ready(Err(e)) => {
                         this.assessment_fut.take();
@@ -479,20 +621,26 @@ where
             // Process incoming stream chunks
             match ready!(this.inner.as_mut().poll_next(cx)) {
                 Some(Ok(bytes)) => {
-                    if let Some(result) = Self::process_stream_chunk(
+                    Self::process_stream_chunk(
                         bytes,
                         this.buffer,
                         this.assessment_fut,
                         this.security_client,
                         &this.model_name,
-                        *this.is_prompt, // Use the is_prompt flag from the struct
-                    ) {
-                        return Poll::Ready(Some(result));
+                        *this.is_prompt,
+                    );
+
+                    // After processing the chunk, check if we have any completed content to return
+                    if this.assessment_fut.is_some() {
+                        // If we started an assessment, wait for it to complete
+                        cx.waker().wake_by_ref();
+                        return Poll::Pending;
+                    } else if let Some(bytes) = this.buffer.get_next_chunk() {
+                        // If we have a chunk ready to return, return it
+                        return Poll::Ready(Some(Ok(bytes)));
                     }
-                    // If process_stream_chunk returned None, it means we started an assessment
-                    // and need to wait for it to complete
-                    cx.waker().wake_by_ref();
-                    return Poll::Pending;
+                    // Otherwise continue processing more chunks
+                    continue;
                 }
                 Some(Err(e)) => {
                     return Poll::Ready(Some(Err(StreamError::NetworkError(e.to_string()))));
@@ -504,13 +652,16 @@ where
                         this.assessment_fut,
                         this.security_client,
                         &this.model_name,
-                        *this.is_prompt, // Use the is_prompt flag from the struct
+                        *this.is_prompt,
                     ) {
                         return Poll::Ready(Some(result));
                     } else if this.assessment_fut.is_some() {
                         // If we started a final assessment, wait for it to complete
                         cx.waker().wake_by_ref();
                         return Poll::Pending;
+                    } else if let Some(bytes) = this.buffer.get_next_chunk() {
+                        // Try to return any remaining buffered chunks
+                        return Poll::Ready(Some(Ok(bytes)));
                     } else {
                         *this.finished = true;
                         return Poll::Ready(None);

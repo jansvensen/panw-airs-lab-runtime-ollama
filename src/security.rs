@@ -269,6 +269,60 @@ impl SecurityClient {
         self.process_scan_result(scan_result)
     }
 
+    // Performs a security assessment that includes both text and code content.
+    //
+    // # Arguments
+    //
+    // * `text_content` - The regular text content to assess
+    // * `code_content` - The code block content to assess
+    // * `model_name` - Name of the AI model associated with this content
+    // * `is_prompt` - If `true`, content is treated as a prompt to an AI; if `false`, as an AI response
+    //
+    // # Returns
+    //
+    // Security assessment results
+    //
+    // # Errors
+    //
+    // Returns error if assessment fails or content is blocked by security policy
+    pub async fn assess_content_with_code(
+        &self,
+        text_content: &str,
+        code_content: &str,
+        model_name: &str,
+        is_prompt: bool,
+    ) -> Result<Assessment, SecurityError> {
+        // Skip assessment for empty content
+        if text_content.trim().is_empty() && code_content.trim().is_empty() {
+            debug!("Skipping PANW assessment for empty text and code content");
+            return Ok(self.create_safe_assessment());
+        }
+
+        // Create Content object directly without extracting code blocks
+        let content_obj = if is_prompt {
+            Content::builder()
+                .with_prompt(text_content.to_string())
+                .with_code_prompt(code_content.to_string())
+                .build()
+                .map_err(|e| SecurityError::AssessmentError(e.to_string()))?
+        } else {
+            Content::builder()
+                .with_response(text_content.to_string())
+                .with_code_response(code_content.to_string())
+                .build()
+                .map_err(|e| SecurityError::AssessmentError(e.to_string()))?
+        };
+
+        debug!("Prepared content with code for PANW assessment: {:#?}", content_obj);
+
+        // Create and send the request payload
+        let payload = self.create_scan_request(content_obj, model_name);
+        let scan_result = self.send_security_request(&payload).await?;
+
+        // Process results
+        self.process_scan_result(scan_result)
+    }
+
     //--------------------------------------------------------------------------
     // Content Processing Methods
     //--------------------------------------------------------------------------
