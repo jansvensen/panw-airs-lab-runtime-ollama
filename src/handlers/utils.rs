@@ -1,8 +1,4 @@
-use crate::{
-    handlers::ApiError,
-    stream::{SecurityAssessable, SecurityAssessedStream, StreamError},
-    AppState,
-};
+use crate::{handlers::ApiError, stream::SecurityAssessedStream, AppState};
 
 use axum::{body::Body, response::Response};
 use bytes::Bytes;
@@ -20,8 +16,8 @@ pub fn build_json_response(bytes: Bytes) -> Result<Response<Body>, ApiError> {
 }
 
 // Helper function to convert `reqwest::Error` to `StreamError`.
-fn convert_stream_error(_err: reqwest::Error) -> StreamError {
-    StreamError::Unknown
+fn convert_stream_error(err: reqwest::Error) -> reqwest::Error {
+    err // Maintain original error type
 }
 
 // Handles streaming requests to API endpoints, applying security assessment to the streamed responses.
@@ -30,25 +26,24 @@ pub async fn handle_streaming_request<T, R>(
     request: T,
     endpoint: &str,
     model: &str,
+    is_prompt: bool,
 ) -> Result<Response<Body>, ApiError>
 where
     T: Serialize + Send + 'static,
-    R: SecurityAssessable + DeserializeOwned + Serialize + Send + Sync + Unpin + 'static,
+    R: DeserializeOwned + Serialize + Send + Sync + Unpin + 'static,
 {
     // Get the original stream from ollama client
     let stream = state.ollama_client.stream(endpoint, &request).await?;
 
     // Convert the stream to the expected type by mapping the error type
-    let converted_stream = stream.map(|result| match result {
-        Ok(bytes) => Ok(bytes),
-        Err(e) => Err(convert_stream_error(e)),
-    });
+    let converted_stream = stream.map(|result| result.map_err(convert_stream_error));
 
     // Create the security-assessed stream
-    let assessed_stream = SecurityAssessedStream::<_, R>::new(
+    let assessed_stream = SecurityAssessedStream::new(
         converted_stream,
         state.security_client.clone(),
         model.to_string(),
+        is_prompt,
     );
 
     // Clone the model string for use in the closure

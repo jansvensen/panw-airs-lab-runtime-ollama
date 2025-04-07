@@ -1,6 +1,6 @@
 [package]
 name = "panw-api-ollama"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 
 [dependencies]
@@ -21,3 +21,4 @@ async-stream = "0.3.5"
 http-body-util = "0.1.0"
 chrono = { version = "0.4", features = ["serde"] }
 futures = "0.3"
+pin-project = "1.1.3"

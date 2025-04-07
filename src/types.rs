@@ -9,7 +9,6 @@
 /// The types are organized into two main categories:
 /// - Ollama API types (requests and responses for text generation, chat, etc.)
 /// - PANW security types (content assessment requests and responses)
-
 use chrono::DateTime;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -28,34 +27,34 @@ use serde_json::Value;
 pub struct GenerateRequest {
     /// Name of the Ollama model to use for generation
     pub model: String,
-    
+
     /// The text prompt to send to the model
     pub prompt: String,
-    
+
     /// Optional system message to guide model behavior
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system: Option<String>,
-    
+
     /// Optional template to format the prompt
     #[serde(skip_serializing_if = "Option::is_none")]
     pub template: Option<String>,
-    
+
     /// Optional context tokens from previous interactions
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<Vec<u32>>,
-    
+
     /// Optional flag to enable streaming responses
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
-    
+
     /// Optional flag to get raw, unfiltered model output
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw: Option<bool>,
-    
+
     /// Optional output format specification
     #[serde(skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
-    
+
     /// Optional model-specific parameters
     #[serde(skip_serializing_if = "Option::is_none")]
     pub options: Option<Value>,
@@ -69,17 +68,17 @@ pub struct GenerateRequest {
 pub struct GenerateResponse {
     /// Name of the model that generated the response
     pub model: String,
-    
+
     /// Timestamp when the response was created
     pub created_at: String,
-    
+
     /// The generated text content
     pub response: String,
-    
+
     /// Optional context tokens for continuing the conversation
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<Vec<u32>>,
-    
+
     /// Indicates whether the generation is complete
     pub done: bool,
 }
@@ -92,18 +91,18 @@ pub struct GenerateResponse {
 pub struct ChatRequest {
     /// Name of the Ollama model to use
     pub model: String,
-    
+
     /// Array of conversation messages with roles and content
     pub messages: Vec<Message>,
-    
+
     /// Optional flag to enable streaming responses
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
-    
+
     /// Optional output format specification
     #[serde(skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
-    
+
     /// Optional model-specific parameters
     #[serde(skip_serializing_if = "Option::is_none")]
     pub options: Option<Value>,
@@ -117,7 +116,7 @@ pub struct ChatRequest {
 pub struct Message {
     /// Identifies the sender of the message (e.g., "user", "assistant")
     pub role: String,
-    
+
     /// The actual text content of the message
     pub content: String,
 }
@@ -129,13 +128,13 @@ pub struct Message {
 pub struct ChatResponse {
     /// Name of the model that generated the response
     pub model: String,
-    
+
     /// Timestamp when the response was created
     pub created_at: String,
-    
+
     /// The model's response as a Message object
     pub message: Message,
-    
+
     /// Indicates whether the generation is complete
     pub done: bool,
 }
@@ -148,10 +147,10 @@ pub struct ChatResponse {
 pub struct EmbeddingsRequest {
     /// Name of the Ollama embedding model to use
     pub model: String,
-    
+
     /// The text to generate embeddings for
     pub prompt: String,
-    
+
     /// Optional model-specific parameters
     #[serde(skip_serializing_if = "Option::is_none")]
     pub options: Option<Value>,
@@ -178,16 +177,16 @@ pub struct ListModelsResponse {
 pub struct ModelInfo {
     /// The model's name/identifier
     pub name: String,
-    
+
     /// Timestamp when the model was last modified
     pub modified_at: String,
-    
+
     /// Size of the model in bytes
     pub size: u64,
-    
+
     /// Unique hash identifying this version of the model
     pub digest: String,
-    
+
     /// Additional technical specifications of the model
     pub details: ModelDetails,
 }
@@ -199,16 +198,16 @@ pub struct ModelInfo {
 pub struct ModelDetails {
     /// Model format (e.g., "gguf")
     pub format: String,
-    
+
     /// Model family/architecture (e.g., "llama")
     pub family: String,
-    
+
     /// All compatible model families
     pub families: Vec<String>,
-    
+
     /// Human-readable parameter count (e.g., "7B")
     pub parameter_size: String,
-    
+
     /// Level of precision reduction applied (e.g., "Q4_0")
     pub quantization_level: String,
 }
@@ -232,13 +231,13 @@ pub struct VersionResponse {
 pub struct ScanRequest {
     /// Transaction ID for tracking the request
     pub tr_id: String,
-    
+
     /// Configuration profile for the security assessment
     pub ai_profile: AiProfile,
-    
+
     /// Additional context about the application and user
     pub metadata: Metadata,
-    
+
     /// Array of content objects to be scanned
     pub contents: Vec<Content>,
 }
@@ -252,41 +251,41 @@ pub struct ScanResponse {
     /// Unique identifier for the assessment report
     #[serde(default)]
     pub report_id: String,
-    
+
     /// UUID of this particular scan
     #[serde(default)]
     pub scan_id: uuid::Uuid,
-    
+
     /// Optional transaction ID matching the request
     #[serde(default)]
     pub tr_id: Option<String>,
-    
+
     /// Optional identifier of the security profile used
     #[serde(default)]
     pub profile_id: Option<String>,
-    
+
     /// Optional name of the security profile used
     #[serde(default)]
     pub profile_name: Option<String>,
-    
+
     /// Security category assigned (e.g., "benign", "malicious")
     pub category: String,
-    
+
     /// Recommended action ("allow", "block", etc.)
     pub action: String,
-    
+
     /// Security issues found in the prompt
     #[serde(default)]
     pub prompt_detected: PromptDetected,
-    
+
     /// Security issues found in the response
     #[serde(default)]
     pub response_detected: ResponseDetected,
-    
+
     /// Optional timestamp when assessment was created
     #[serde(default)]
     pub created_at: Option<DateTime<Utc>>,
-    
+
     /// Optional timestamp when assessment was completed
     #[serde(default)]
     pub completed_at: Option<DateTime<Utc>>,
@@ -336,10 +335,10 @@ pub struct AiProfile {
 pub struct Metadata {
     /// Name of the application requesting the assessment
     pub app_name: String,
-    
+
     /// Identifier of the user in the context of the application
     pub app_user: String,
-    
+
     /// Name of the AI model that generated or will process the content
     pub ai_model: String,
 }
@@ -353,15 +352,15 @@ pub struct Content {
     /// Optional text representing a prompt to an AI model
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt: Option<String>,
-    
+
     /// Optional text representing a response from an AI model
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response: Option<String>,
-    
+
     /// Extracted code blocks from prompt (Markdown ``` blocks)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code_prompt: Option<String>,
-    
+
     /// Extracted code blocks from response (Markdown ``` blocks)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code_response: Option<String>,
@@ -376,19 +375,19 @@ pub struct PromptDetected {
     /// Whether problematic URL categories were detected
     #[serde(default)]
     pub url_cats: bool,
-    
+
     /// Whether data loss prevention issues were detected
     #[serde(default)]
     pub dlp: bool,
-    
+
     /// Whether prompt injection attempts were detected
     #[serde(default)]
     pub injection: bool,
-    
+
     /// Whether toxic or harmful content was detected
     #[serde(default)]
     pub toxic_content: bool,
-    
+
     /// Whether malicious code was detected
     #[serde(default)]
     pub malicious_code: bool,
@@ -403,20 +402,28 @@ pub struct ResponseDetected {
     /// Whether problematic URL categories were detected
     #[serde(default)]
     pub url_cats: bool,
-    
+
     /// Whether data loss prevention issues were detected
     #[serde(default)]
     pub dlp: bool,
-    
+
     /// Whether database security issues were detected
     #[serde(default)]
     pub db_security: bool,
-    
+
     /// Whether toxic or harmful content was detected
     #[serde(default)]
     pub toxic_content: bool,
-    
+
     /// Whether malicious code was detected
     #[serde(default)]
     pub malicious_code: bool,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum StreamError {
+    #[error("Security assessment error: {0}")]
+    SecurityError(String),
+    #[error("Network error: {0}")]
+    NetworkError(String),
 }

@@ -10,17 +10,8 @@ use crate::handlers::utils::{
     handle_streaming_request, log_security_failure,
 };
 use crate::handlers::ApiError;
-use crate::stream::SecurityAssessable;
 use crate::types::{GenerateRequest, GenerateResponse};
 use crate::AppState;
-
-// Implementation of SecurityAssessable for GenerateResponse to enable
-// security scanning of responses.
-impl SecurityAssessable for crate::types::GenerateResponse {
-    fn get_content_for_assessment(&self) -> Option<(&str, &str)> {
-        Some((&self.response, "generate_response"))
-    }
-}
 
 // Handles text generation requests with security assessment.
 //
@@ -41,10 +32,10 @@ impl SecurityAssessable for crate::types::GenerateResponse {
 // * `Err(ApiError)` - If an error occurs during processing
 pub async fn handle_generate(
     State(state): State<AppState>,
-    Json(mut request): Json<GenerateRequest>,
+    Json(request): Json<GenerateRequest>,
 ) -> Result<Response, ApiError> {
     // Ensure stream parameter is explicitly set
-    request.stream = Some(false);
+    // request.stream = Some(false);
 
     debug!("Received generate request for model: {}", request.model);
 
@@ -183,11 +174,13 @@ async fn handle_streaming_generate(
     debug!("Setting up streaming generate request");
 
     let model = request.model.clone();
+    // For streaming generate, we're dealing with responses from the LLM, so is_prompt should be false
     handle_streaming_request::<GenerateRequest, GenerateResponse>(
         &state,
         request,
         "/api/generate",
         &model,
+        false,
     )
     .await
 }

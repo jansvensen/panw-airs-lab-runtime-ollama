@@ -269,6 +269,60 @@ impl SecurityClient {
         self.process_scan_result(scan_result)
     }
 
+    // Performs a security assessment that includes both text and code content.
+    //
+    // # Arguments
+    //
+    // * `text_content` - The regular text content to assess
+    // * `code_content` - The code block content to assess
+    // * `model_name` - Name of the AI model associated with this content
+    // * `is_prompt` - If `true`, content is treated as a prompt to an AI; if `false`, as an AI response
+    //
+    // # Returns
+    //
+    // Security assessment results
+    //
+    // # Errors
+    //
+    // Returns error if assessment fails or content is blocked by security policy
+    pub async fn assess_content_with_code(
+        &self,
+        text_content: &str,
+        code_content: &str,
+        model_name: &str,
+        is_prompt: bool,
+    ) -> Result<Assessment, SecurityError> {
+        // Skip assessment for empty content
+        if text_content.trim().is_empty() && code_content.trim().is_empty() {
+            debug!("Skipping PANW assessment for empty text and code content");
+            return Ok(self.create_safe_assessment());
+        }
+
+        // Create Content object directly without extracting code blocks
+        let content_obj = if is_prompt {
+            Content::builder()
+                .with_prompt(text_content.to_string())
+                .with_code_prompt(code_content.to_string())
+                .build()
+                .map_err(|e| SecurityError::AssessmentError(e.to_string()))?
+        } else {
+            Content::builder()
+                .with_response(text_content.to_string())
+                .with_code_response(code_content.to_string())
+                .build()
+                .map_err(|e| SecurityError::AssessmentError(e.to_string()))?
+        };
+
+        debug!("Prepared content with code for PANW assessment: {:#?}", content_obj);
+
+        // Create and send the request payload
+        let payload = self.create_scan_request(content_obj, model_name);
+        let scan_result = self.send_security_request(&payload).await?;
+
+        // Process results
+        self.process_scan_result(scan_result)
+    }
+
     //--------------------------------------------------------------------------
     // Content Processing Methods
     //--------------------------------------------------------------------------
@@ -358,17 +412,24 @@ impl SecurityClient {
         let code_blocks = self.extract_code_blocks(content);
         let has_code = !code_blocks.is_empty();
 
+        // Remove code blocks from the main content to avoid duplication
+        let text_content = if has_code {
+            self.remove_code_blocks(content)
+        } else {
+            content.to_string()
+        };
+
         // Use the builder pattern for creating content objects
         let builder = Content::builder();
 
         let content_builder = if is_prompt {
-            let mut builder = builder.with_prompt(content.to_string());
+            let mut builder = builder.with_prompt(text_content);
             if has_code {
                 builder = builder.with_code_prompt(code_blocks);
             }
             builder
         } else {
-            let mut builder = builder.with_response(content.to_string());
+            let mut builder = builder.with_response(text_content);
             if has_code {
                 builder = builder.with_code_response(code_blocks);
             }
@@ -378,6 +439,42 @@ impl SecurityClient {
         content_builder
             .build()
             .map_err(|e| SecurityError::AssessmentError(e.to_string()))
+    }
+
+    // Removes code blocks from text, keeping only non-code content
+    //
+    // This function removes all content between triple backtick (```) markers
+    // along with the markers themselves, returning only the non-code text.
+    //
+    // # Arguments
+    //
+    // * `content` - The text content to process
+    //
+    // # Returns
+    //
+    // A string with code blocks removed
+    fn remove_code_blocks(&self, content: &str) -> String {
+        let mut result = String::new();
+        let mut in_code_block = false;
+        
+        for line in content.lines() {
+            let trimmed = line.trim();
+            
+            // Check for code block delimiter
+            if trimmed.starts_with("```") {
+                in_code_block = !in_code_block;
+                // Don't add the delimiter line to the result
+                continue;
+            }
+            
+            // Only add lines that are not inside code blocks
+            if !in_code_block {
+                result.push_str(line);
+                result.push('\n');
+            }
+        }
+        
+        result
     }
 
     // Processes scan results from the PANW AI Runtime API into an Assessment.
