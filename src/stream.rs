@@ -10,15 +10,26 @@ use std::{
     task::{Context, Poll},
 };
 
-// Content struct for assessment
+/// A structure representing content for security assessment.
+///
+/// This struct holds both regular text and code content, either from prompts or responses.
+/// It allows the security assessment system to analyze different content types separately.
 #[allow(dead_code)]
 pub struct Content<'a> {
+    /// The text of a prompt to be assessed, if any
     pub prompt: Option<&'a str>,
+    /// The text of a response to be assessed, if any
     pub response: Option<&'a str>,
+    /// Code extracted from a prompt to be assessed, if any
     pub code_prompt: Option<&'a str>,
+    /// Code extracted from a response to be assessed, if any
     pub code_response: Option<&'a str>,
 }
 
+/// Buffer for stream content that handles parsing, accumulation, and code extraction.
+///
+/// This struct maintains separate buffers for text and code content, tracks code block boundaries,
+/// and manages the buffering of content for security assessment.
 #[derive(Debug)]
 struct StreamBuffer {
     text_buffer: String,
@@ -40,6 +51,10 @@ struct StreamBuffer {
 }
 
 impl StreamBuffer {
+    /// Creates a new StreamBuffer with default settings.
+    ///
+    /// Initializes all buffers as empty and sets default values for assessment
+    /// parameters such as the assessment window size and sentence boundary characters.
     fn new() -> Self {
         Self {
             text_buffer: String::new(),
@@ -61,6 +76,14 @@ impl StreamBuffer {
         }
     }
 
+    /// Processes a string chunk from the stream, parsing it as JSON and extracting content.
+    ///
+    /// This method parses Ollama's JSON response chunks, identifies and separates regular text
+    /// from code blocks, and maintains the state of code block detection between chunks.
+    ///
+    /// # Arguments
+    ///
+    /// * `chunk` - A string representing a JSON chunk from the Ollama API
     fn process(&mut self, chunk: &str) {
         // Parse Ollama's JSON response chunk
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(chunk) {
@@ -111,6 +134,10 @@ impl StreamBuffer {
         }
     }
 
+    /// Detects code block markers in the current active buffer.
+    ///
+    /// This method looks for triple backtick (```) markers in either the text or code buffer
+    /// (depending on the current state) and handles transitions between text and code content.
     fn detect_code_blocks(&mut self) {
         // Look for triple backticks in the current active buffer
         let active_buffer = if self.in_code_block {
@@ -162,6 +189,18 @@ impl StreamBuffer {
         }
     }
 
+    /// Prepares content for security assessment based on the current buffer state.
+    ///
+    /// Creates a Content structure containing either prompt or response data along with
+    /// any associated code blocks, depending on whether the content is a prompt or response.
+    ///
+    /// # Arguments
+    ///
+    /// * `is_prompt` - Boolean indicating if the content is a prompt (true) or response (false)
+    ///
+    /// # Returns
+    ///
+    /// A Content structure with the appropriate fields populated
     fn prepare_assessment_content(&self, is_prompt: bool) -> Content {
         // Check if we have code blocks
         let has_code = !self.code_buffer.is_empty();
@@ -193,6 +232,18 @@ impl StreamBuffer {
         }
     }
 
+    /// Determines if the current buffer state contains content that should be assessed.
+    ///
+    /// Content is considered assessable if it exceeds the assessment window size,
+    /// contains a complete code block, or forms a complete sentence or paragraph.
+    ///
+    /// # Arguments
+    ///
+    /// * `is_prompt` - Boolean indicating if the content is a prompt (true) or response (false)
+    ///
+    /// # Returns
+    ///
+    /// Some(Content) if there is assessable content, None otherwise
     fn get_assessable_chunk(&mut self, is_prompt: bool) -> Option<Content> {
         // Always assess if we've accumulated a large amount of content
         if self.text_buffer.len() >= self.assessment_window
@@ -223,6 +274,14 @@ impl StreamBuffer {
         None
     }
 
+    /// Commits the current buffer state after assessment.
+    ///
+    /// If the content is deemed safe, updates the read position and clears the code buffer.
+    /// If not safe, keeps the buffers unchanged for potential modification.
+    ///
+    /// # Arguments
+    ///
+    /// * `is_safe` - Boolean indicating if the assessed content is safe
     fn commit(&mut self, is_safe: bool) {
         // If content is safe, we can reset buffers or handle accordingly
         if is_safe {
@@ -233,19 +292,37 @@ impl StreamBuffer {
         // If not safe, we keep buffers as is to potentially modify them
     }
 
-    // Add chunk to the pending buffer instead of the output buffer
+    /// Adds a chunk to the pending buffer for later assessment.
+    ///
+    /// This method stores chunks that are waiting for security assessment before
+    /// being released to the output stream.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - The raw bytes to store in the pending buffer
     fn buffer_pending_chunk(&mut self, bytes: Bytes) {
         self.pending_buffer.push(bytes);
         self.waiting_for_assessment = true;
     }
 
-    // Transform an incoming chunk to maintain all punctuation and code blocks
+    /// Stores raw bytes in the output buffer without any processing.
+    ///
+    /// This preserves all punctuation and formatting for content that doesn't need
+    /// special handling.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - The raw bytes to store in the output buffer
     fn buffer_raw_chunk(&mut self, bytes: Bytes) {
         // Always store the raw bytes to preserve all punctuation and formatting
         self.output_buffer.push(bytes);
     }
 
-    // Move all pending chunks to the appropriate buffer once assessment is complete
+    /// Moves content from the pending buffer to the appropriate destination buffer
+    /// once security assessment is complete.
+    ///
+    /// This method determines whether the pending content contains code blocks and
+    /// routes it to either the code buffer or text buffer accordingly.
     fn release_pending_chunks(&mut self) {
         // First, find what kind of content we have in pending buffer
         let mut has_code = false;
@@ -283,7 +360,10 @@ impl StreamBuffer {
         self.waiting_for_assessment = false;
     }
 
-    // Check if we should release buffered content after processing
+    /// Marks the current batch of content as ready to be returned.
+    ///
+    /// This method is called when either text or code content has been completed
+    /// and is ready to be sent to the consumer.
     fn mark_batch_ready(&mut self) {
         // If we have completed code blocks or text, mark the batch as ready
         if self.has_complete_code || self.has_complete_text {
@@ -292,7 +372,14 @@ impl StreamBuffer {
         }
     }
 
-    // Create a single chunk from all accumulated content
+    /// Creates a single response from all accumulated content in the relevant buffer.
+    ///
+    /// Combines chunks from either code, text, or general output buffers into a single
+    /// response, prioritizing code content if available.
+    ///
+    /// # Returns
+    ///
+    /// Some(Bytes) if there is content to return, None otherwise
     fn create_complete_response(&mut self) -> Option<Bytes> {
         let mut combined_data = Vec::new();
 
@@ -325,7 +412,14 @@ impl StreamBuffer {
         }
     }
 
-    // Get next chunk only if a complete batch is ready
+    /// Returns the next complete chunk if a batch is ready.
+    ///
+    /// This method only returns content when a complete batch is ready, as indicated
+    /// by the batch_ready flag.
+    ///
+    /// # Returns
+    ///
+    /// Some(Bytes) if a complete batch is ready, None otherwise
     fn get_next_chunk(&mut self) -> Option<Bytes> {
         if self.batch_ready {
             return self.create_complete_response();
@@ -335,7 +429,14 @@ impl StreamBuffer {
         None
     }
 
-    // Determine content type from a chunk and buffer accordingly
+    /// Analyzes and buffers incoming content based on its type.
+    ///
+    /// This method determines whether the incoming bytes contain text, code blocks, or
+    /// other content, and routes them to the appropriate buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - The raw bytes to analyze and buffer
     fn buffer_content(&mut self, bytes: Bytes) {
         // Start accumulating content
         if !self.accumulating {
@@ -380,6 +481,11 @@ impl StreamBuffer {
 }
 
 #[pin_project]
+/// A stream wrapper that performs security assessment on content chunks.
+///
+/// This stream wraps any stream of bytes and performs security assessment on the content
+/// before passing it on to consumers. It handles buffering, batching, and separating
+/// text and code content for assessment.
 pub struct SecurityAssessedStream<S>
 where
     S: Stream<Item = Result<Bytes, reqwest::Error>>,
@@ -395,7 +501,19 @@ where
     is_prompt: bool,
 }
 
-// Helper function moved outside of impl blocks
+/// Creates a formatted response for blocked content.
+///
+/// This function generates a standardized message indicating that content has been
+    /// blocked by the security assessment system, including the category and action details.
+///
+/// # Arguments
+///
+/// * `category` - The security category that triggered the block
+/// * `action` - The action taken in response to the security threat
+///
+/// # Returns
+///
+/// Bytes containing the formatted blocked content message
 fn create_blocked_response(category: &str, action: &str) -> Bytes {
     Bytes::from(format!(
         "BLOCKED - Category: {}, Action: {}",
@@ -403,7 +521,21 @@ fn create_blocked_response(category: &str, action: &str) -> Bytes {
     ))
 }
 
-// Create properly formatted content for security assessment
+/// Creates a future that will perform security assessment on buffered content.
+///
+/// This function prepares the content from the buffer and creates an asynchronous task
+/// that will perform a security assessment using the provided security client.
+///
+/// # Arguments
+///
+/// * `buffer` - The StreamBuffer containing content to assess
+/// * `security_client` - The client to use for security assessment
+/// * `model_name` - The name of the AI model being used
+/// * `is_prompt` - Whether the content is a prompt (true) or response (false)
+///
+/// # Returns
+///
+/// A pinned, boxed future that will resolve to an Assessment result
 fn create_security_assessment_future(
     buffer: &StreamBuffer,
     security_client: &SecurityClient,
@@ -440,6 +572,21 @@ impl<S> SecurityAssessedStream<S>
 where
     S: Stream<Item = Result<Bytes, reqwest::Error>>,
 {
+    /// Creates a new SecurityAssessedStream wrapping an inner byte stream.
+    ///
+    /// This constructor initializes a new stream that will perform security assessment
+    /// on content chunks from the inner stream before passing them on.
+    ///
+    /// # Arguments
+    ///
+    /// * `inner` - The inner stream to wrap, which produces bytes
+    /// * `security_client` - Client for performing security assessments
+    /// * `model_name` - Name of the AI model being used
+    /// * `is_prompt` - Whether this stream contains prompt (true) or response (false) content
+    ///
+    /// # Returns
+    ///
+    /// A new SecurityAssessedStream instance
     pub fn new(
         inner: S,
         security_client: SecurityClient,
@@ -458,7 +605,21 @@ where
         }
     }
 
-    // Process assessment results
+    /// Processes the results of a security assessment on buffered content.
+    ///
+    /// This method handles what happens after a security assessment is completed,
+    /// either passing content through if it's safe or blocking it if it's unsafe.
+    ///
+    /// # Arguments
+    ///
+    /// * `assessment` - The security assessment result
+    /// * `buffer` - The buffer containing content that was assessed
+    /// * `assessment_fut` - The future that produced the assessment (will be cleared)
+    /// * `retry_count` - Counter for assessment retry attempts
+    ///
+    /// # Returns
+    ///
+    /// Some(Result) if a response should be sent immediately, None if processing should continue
     fn process_assessment_result(
         assessment: Assessment,
         buffer: &mut StreamBuffer,
@@ -499,7 +660,23 @@ where
         None
     }
 
-    // Process a chunk from the stream and return a response if available
+    /// Processes a single chunk from the stream.
+    ///
+    /// This method handles incoming bytes, processing them for content extraction
+    /// and determining whether a security assessment is needed.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - The raw bytes from the stream
+    /// * `buffer` - The buffer to store processed content
+    /// * `assessment_fut` - Optional future for pending assessments
+    /// * `security_client` - Client for performing security assessments
+    /// * `model_name` - Name of the AI model being used
+    /// * `is_prompt` - Whether this is prompt or response content
+    ///
+    /// # Returns
+    ///
+    /// Some(Result) if a response should be sent immediately, None if processing should continue
     fn process_stream_chunk(
         bytes: Bytes,
         buffer: &mut StreamBuffer,
@@ -551,7 +728,22 @@ where
         None
     }
 
-    // Process stream end and trigger final assessment if needed
+    /// Handles the end of a stream by performing a final assessment if needed.
+    ///
+    /// When the input stream ends, this method checks if there's any remaining content
+    /// that needs security assessment before the stream can complete.
+    ///
+    /// # Arguments
+    ///
+    /// * `buffer` - The buffer containing any remaining content
+    /// * `assessment_fut` - Optional future for pending assessments
+    /// * `security_client` - Client for performing security assessments
+    /// * `model_name` - Name of the AI model being used
+    /// * `is_prompt` - Whether this is prompt or response content
+    ///
+    /// # Returns
+    ///
+    /// Some(Result) if a final response should be sent, None if processing should continue
     fn process_stream_end(
         buffer: &mut StreamBuffer,
         assessment_fut: &mut Option<
@@ -574,7 +766,19 @@ where
         }
     }
 
-    // Stream implementation merged into the main impl block
+    /// Implementation of the Stream::poll_next method.
+    ///
+    /// This method handles the stream polling logic, checking for buffered chunks,
+    /// processing pending assessments, and handling the inner stream's data.
+    ///
+    /// # Arguments
+    ///
+    /// * `self` - Pinned mutable reference to self
+    /// * `cx` - Task context for waking
+    ///
+    /// # Returns
+    ///
+    /// Poll indicating whether an item is ready or pending
     fn poll_next_impl(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -679,6 +883,19 @@ where
 {
     type Item = Result<Bytes, StreamError>;
 
+    /// Polls this stream for the next item.
+    ///
+    /// This implementation satisfies the Stream trait by delegating to the poll_next_impl method.
+    /// It handles asynchronous polling of the wrapped stream, including security assessment of content.
+    ///
+    /// # Arguments
+    ///
+    /// * `self` - Pinned mutable reference to self
+    /// * `cx` - Task context for waking
+    ///
+    /// # Returns
+    ///
+    /// Poll indicating whether an item is ready or pending
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.poll_next_impl(cx)
     }
