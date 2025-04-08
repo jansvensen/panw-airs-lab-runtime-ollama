@@ -81,6 +81,7 @@ panw-api-ollama acts as a transparent proxy:
 3. If the prompt passes security checks, it forwards the request to Ollama
 4. It receives Ollama's response and checks it for security issues
 5. It delivers the response back to OpenWebUI
+6. **NEW**: Code blocks are now independently assessed for security vulnerabilities, regardless of whether they appear in prompts or responses
 
 All this happens with minimal latency impact while providing maximum security.
 
