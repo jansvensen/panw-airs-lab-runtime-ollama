@@ -115,8 +115,7 @@ async fn assess_chat_messages(
         if !assessment.is_safe {
             log_security_failure("chat message", &assessment.category, &assessment.action);
 
-            let blocked_message =
-                format_security_violation_message(&assessment.category, &assessment.action);
+            let blocked_message = format_security_violation_message(&assessment);
 
             let response = ChatResponse {
                 model: request.model.clone(),
@@ -181,8 +180,7 @@ async fn handle_non_streaming_chat(
         log_security_failure("chat response", &assessment.category, &assessment.action);
 
         // Replace content with security violation message
-        response_body.message.content =
-            format_security_violation_message(&assessment.category, &assessment.action);
+        response_body.message.content = format_security_violation_message(&assessment);
 
         return build_violation_response(response_body);
     }

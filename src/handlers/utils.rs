@@ -79,14 +79,57 @@ where
         .map_err(|e| ApiError::InternalError(format!("Failed to create response: {}", e)))
 }
 
-// Formats a standard security violation message.
-pub fn format_security_violation_message(category: &str, action: &str) -> String {
+// Formats a comprehensive security violation message with detailed detection reasons.
+pub fn format_security_violation_message(assessment: &crate::security::Assessment) -> String {
+    let mut reasons = Vec::new();
+
+    // Check prompt detection reasons
+    if assessment.details.prompt_detected.url_cats {
+        reasons.push("Prompt contains malicious URLs");
+    }
+    if assessment.details.prompt_detected.dlp {
+        reasons.push("Prompt contains sensitive information");
+    }
+    if assessment.details.prompt_detected.injection {
+        reasons.push("Prompt contains injection threats");
+    }
+    if assessment.details.prompt_detected.toxic_content {
+        reasons.push("Prompt contains harmful content");
+    }
+    if assessment.details.prompt_detected.malicious_code {
+        reasons.push("Prompt contains malicious code");
+    }
+
+    // Check response detection reasons
+    if assessment.details.response_detected.url_cats {
+        reasons.push("Response contains malicious URLs");
+    }
+    if assessment.details.response_detected.dlp {
+        reasons.push("Response contains sensitive information");
+    }
+    if assessment.details.response_detected.db_security {
+        reasons.push("Response contains database security threats");
+    }
+    if assessment.details.response_detected.toxic_content {
+        reasons.push("Response contains harmful content");
+    }
+    if assessment.details.response_detected.malicious_code {
+        reasons.push("Response contains malicious code");
+    }
+
+    let reasons_text = if reasons.is_empty() {
+        "Unspecified security concern".to_string()
+    } else {
+        reasons.join("\n• ")
+    };
+
     format!(
-        "⚠️ This response was blocked due to security policy violations:\n\n\
+        "⚠️ This content was blocked due to security policy violations:\n\n\
          • Category: {}\n\
-         • Action: {}\n\n\
+         • Action: {}\n\
+         • Reasons: {}\n\n\
          Please reformulate your request to comply with security policies.",
-        category, action
+        assessment.category, assessment.action, reasons_text
     )
 }
 

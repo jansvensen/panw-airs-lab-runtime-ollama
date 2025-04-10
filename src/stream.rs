@@ -1,6 +1,7 @@
 use crate::{
     security::{Assessment, SecurityClient},
     types::StreamError,
+    handlers::utils::format_security_violation_message,
 };
 use bytes::Bytes;
 use futures_util::{ready, Future, Stream};
@@ -506,20 +507,32 @@ where
 /// Creates a formatted response for blocked content.
 ///
 /// This function generates a standardized message indicating that content has been
-/// blocked by the security assessment system, including the category and action details.
+/// blocked by the security assessment system, including the category, action details,
+/// and specific detection information.
 ///
 /// # Arguments
 ///
-/// * `category` - The security category that triggered the block
-/// * `action` - The action taken in response to the security threat
+/// * `assessment` - The complete security assessment result
 ///
 /// # Returns
 ///
 /// Bytes containing the formatted blocked content message
-fn create_blocked_response(category: &str, action: &str) -> Bytes {
-    Bytes::from(format!(
-        "BLOCKED - Category: {}, Action: {}",
-        category, action
+fn create_blocked_response(assessment: &Assessment) -> Bytes {
+    // Format a JSON response that looks like a normal LLM response but contains our blocked message
+    let blocked_json = serde_json::json!({
+        "model": "security-filter", // Could be customized if needed
+        "created_at": chrono::Utc::now().to_rfc3339(),
+        "message": {
+            "role": "assistant",
+            "content": format_security_violation_message(assessment)
+        },
+        "done": true
+    });
+    
+    // Convert to bytes
+    Bytes::from(serde_json::to_vec(&blocked_json).unwrap_or_else(|_| 
+        format!("BLOCKED - Category: {}, Action: {}", 
+                assessment.category, assessment.action).into_bytes()
     ))
 }
 
@@ -634,7 +647,7 @@ where
         *assessment_fut = None;
 
         if !assessment.is_safe {
-            let blocked = create_blocked_response(&assessment.category, &assessment.action);
+            let blocked = create_blocked_response(&assessment);
             *retry_count = 0;
             // Clear the pending buffer since we're not going to send these chunks
             buffer.pending_buffer.clear();

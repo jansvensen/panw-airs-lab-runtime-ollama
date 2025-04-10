@@ -82,7 +82,7 @@ async fn assess_generate_prompt(
         info!("Blocked generation request due to security violation in prompt");
 
         let blocked_message =
-            format_security_violation_message(&assessment.category, &assessment.action);
+            format_security_violation_message(&assessment);
 
         let response = GenerateResponse {
             model: request.model.clone(),
@@ -146,8 +146,7 @@ async fn handle_non_streaming_generate(
         info!("Blocked unsafe AI-generated content");
 
         // Replace the content with security message
-        response_body.response =
-            format_security_violation_message(&assessment.category, &assessment.action);
+        response_body.response = format_security_violation_message(&assessment);
 
         return build_violation_response(response_body);
     }
