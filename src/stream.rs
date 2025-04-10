@@ -48,6 +48,7 @@ struct StreamBuffer {
     has_complete_code: bool,      // Flag indicating we have complete code
     batch_ready: bool,            // Flag indicating a batch is ready to send
     accumulating: bool,           // Flag indicating we're accumulating chunks
+    blocked: bool,                // Flag indicating content has been blocked
 }
 
 impl StreamBuffer {
@@ -73,6 +74,7 @@ impl StreamBuffer {
             has_complete_code: false,
             batch_ready: false,
             accumulating: false,
+            blocked: false,
         }
     }
 
@@ -504,7 +506,7 @@ where
 /// Creates a formatted response for blocked content.
 ///
 /// This function generates a standardized message indicating that content has been
-    /// blocked by the security assessment system, including the category and action details.
+/// blocked by the security assessment system, including the category and action details.
 ///
 /// # Arguments
 ///
@@ -638,6 +640,7 @@ where
             buffer.pending_buffer.clear();
             buffer.waiting_for_assessment = false;
             buffer.accumulating = false;
+            buffer.blocked = true;
             return Some(Ok(blocked));
         }
 
@@ -788,6 +791,12 @@ where
     {
         let mut this = self.project();
 
+        // Check if content has been blocked, if so we should stop processing and close the stream
+        if this.buffer.blocked {
+            *this.finished = true;
+            return Poll::Ready(None);
+        }
+
         // First check if we have any buffered chunks ready to return
         if let Some(bytes) = this.buffer.get_next_chunk() {
             return Poll::Ready(Some(Ok(bytes)));
@@ -808,6 +817,11 @@ where
                             this.assessment_fut,
                             this.retry_count,
                         ) {
+                            // If content has been blocked, return the blocked message
+                            // and mark the stream as finished on the next poll
+                            if this.buffer.blocked {
+                                return Poll::Ready(Some(result));
+                            }
                             return Poll::Ready(Some(result));
                         }
                         // After processing assessment, check if we have buffered chunks to return
