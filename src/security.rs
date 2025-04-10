@@ -57,8 +57,8 @@ pub enum SecurityError {
     JsonError(#[from] serde_json::Error),
 
     // Content that has been blocked by security policy
-    #[error("Content blocked by PANW AI security policy")]
-    BlockedContent,
+    #[error("Content blocked by PANW AI security policy: {0}")]
+    BlockedContent(String),
 }
 
 // Represents the result of a security assessment from PANW AI Runtime API.
@@ -313,7 +313,10 @@ impl SecurityClient {
                 .map_err(|e| SecurityError::AssessmentError(e.to_string()))?
         };
 
-        debug!("Prepared content with code for PANW assessment: {:#?}", content_obj);
+        debug!(
+            "Prepared content with code for PANW assessment: {:#?}",
+            content_obj
+        );
 
         // Create and send the request payload
         let payload = self.create_scan_request(content_obj, model_name);
@@ -456,24 +459,24 @@ impl SecurityClient {
     fn remove_code_blocks(&self, content: &str) -> String {
         let mut result = String::new();
         let mut in_code_block = false;
-        
+
         for line in content.lines() {
             let trimmed = line.trim();
-            
+
             // Check for code block delimiter
             if trimmed.starts_with("```") {
                 in_code_block = !in_code_block;
                 // Don't add the delimiter line to the result
                 continue;
             }
-            
+
             // Only add lines that are not inside code blocks
             if !in_code_block {
                 result.push_str(line);
                 result.push('\n');
             }
         }
-        
+
         result
     }
 
