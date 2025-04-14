@@ -2,7 +2,6 @@ use crate::{
     handlers::utils::format_security_violation_message,
     security::{Assessment, SecurityClient},
     types::StreamError,
-    handlers::utils::format_security_violation_message,
 };
 use bytes::Bytes;
 use futures_util::{ready, Future, Stream};
