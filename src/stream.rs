@@ -528,12 +528,15 @@ fn create_blocked_response(assessment: &Assessment) -> Bytes {
         },
         "done": true
     });
-    
+
     // Convert to bytes
-    Bytes::from(serde_json::to_vec(&blocked_json).unwrap_or_else(|_| 
-        format!("BLOCKED - Category: {}, Action: {}", 
-                assessment.category, assessment.action).into_bytes()
-    ))
+    Bytes::from(serde_json::to_vec(&blocked_json).unwrap_or_else(|_| {
+        format!(
+            "BLOCKED - Category: {}, Action: {}",
+            assessment.category, assessment.action
+        )
+        .into_bytes()
+    }))
 }
 
 /// Creates a future that will perform security assessment on buffered content.
