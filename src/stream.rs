@@ -1,7 +1,7 @@
 use crate::{
+    handlers::utils::format_security_violation_message,
     security::{Assessment, SecurityClient},
     types::StreamError,
-    handlers::utils::format_security_violation_message,
 };
 use bytes::Bytes;
 use futures_util::{ready, Future, Stream};
@@ -50,6 +50,8 @@ struct StreamBuffer {
     batch_ready: bool,            // Flag indicating a batch is ready to send
     accumulating: bool,           // Flag indicating we're accumulating chunks
     blocked: bool,                // Flag indicating content has been blocked
+    last_assessed_text_pos: usize, // Position in text buffer that has already been assessed
+    last_assessed_code_pos: usize, // Position in code buffer that has already been assessed
 }
 
 impl StreamBuffer {
@@ -68,7 +70,7 @@ impl StreamBuffer {
             code_buffer_complete: Vec::new(),
             pending_buffer: Vec::new(),
             assessment_window: 100000,
-            sentence_boundary_chars: &['.', '!', '?', '\n'],
+            sentence_boundary_chars: &['\n'],
             last_was_boundary: false,
             waiting_for_assessment: false,
             has_complete_text: false,
@@ -76,6 +78,8 @@ impl StreamBuffer {
             batch_ready: false,
             accumulating: false,
             blocked: false,
+            last_assessed_text_pos: 0,
+            last_assessed_code_pos: 0,
         }
     }
 
@@ -204,33 +208,37 @@ impl StreamBuffer {
     /// # Returns
     ///
     /// A Content structure with the appropriate fields populated
-    fn prepare_assessment_content(&self, is_prompt: bool) -> Content {
-        // Check if we have code blocks
-        let has_code = !self.code_buffer.is_empty();
+    fn prepare_assessment_content(&mut self, is_prompt: bool) -> Content {
+        // Get only the new (unassessed) portions of the text and code buffers
+        let new_text = if self.text_buffer.len() > self.last_assessed_text_pos {
+            &self.text_buffer[self.last_assessed_text_pos..]
+        } else {
+            ""
+        };
+
+        let new_code = if self.code_buffer.len() > self.last_assessed_code_pos {
+            &self.code_buffer[self.last_assessed_code_pos..]
+        } else {
+            ""
+        };
+
+        let has_new_code = !new_code.is_empty();
 
         if is_prompt {
             // For prompt content
             Content {
-                prompt: Some(&self.text_buffer),
+                prompt: Some(new_text),
                 response: None,
-                code_prompt: if has_code {
-                    Some(&self.code_buffer)
-                } else {
-                    None
-                },
+                code_prompt: if has_new_code { Some(new_code) } else { None },
                 code_response: None,
             }
         } else {
             // For response content
             Content {
                 prompt: None,
-                response: Some(&self.text_buffer),
+                response: Some(new_text),
                 code_prompt: None,
-                code_response: if has_code {
-                    Some(&self.code_buffer)
-                } else {
-                    None
-                },
+                code_response: if has_new_code { Some(new_code) } else { None },
             }
         }
     }
@@ -248,20 +256,36 @@ impl StreamBuffer {
     ///
     /// Some(Content) if there is assessable content, None otherwise
     fn get_assessable_chunk(&mut self, is_prompt: bool) -> Option<Content> {
-        // Always assess if we've accumulated a large amount of content
-        if self.text_buffer.len() >= self.assessment_window
-            || self.code_buffer.len() >= self.assessment_window
+        let new_text_content = self.text_buffer.len() > self.last_assessed_text_pos;
+        let new_code_content = self.code_buffer.len() > self.last_assessed_code_pos;
+
+        // Check if there is any new content to assess
+        if !new_text_content && !new_code_content {
+            return None;
+        }
+
+        // Safety check - make sure positions are valid to prevent subtraction overflow
+        if self.text_buffer.len() < self.last_assessed_text_pos {
+            self.last_assessed_text_pos = 0;
+        }
+        if self.code_buffer.len() < self.last_assessed_code_pos {
+            self.last_assessed_code_pos = 0;
+        }
+
+        // Always assess if we've accumulated a large amount of new content
+        if (self.text_buffer.len() - self.last_assessed_text_pos) >= self.assessment_window
+            || (self.code_buffer.len() - self.last_assessed_code_pos) >= self.assessment_window
         {
             return Some(self.prepare_assessment_content(is_prompt));
         }
 
         // If we've completed a code block, assess it
-        if !self.in_code_block && !self.code_buffer.is_empty() {
+        if !self.in_code_block && new_code_content {
             return Some(self.prepare_assessment_content(is_prompt));
         }
 
         // Check for semantic boundaries in text
-        if !self.text_buffer.is_empty() {
+        if new_text_content {
             let last_char = self.text_buffer.chars().last().unwrap_or(' ');
             if self.sentence_boundary_chars.contains(&last_char)
                 && self.text_buffer.len() > 15
@@ -289,8 +313,10 @@ impl StreamBuffer {
         // If content is safe, we can reset buffers or handle accordingly
         if is_safe {
             self.read_pos = self.text_buffer.len();
+            self.last_assessed_text_pos = self.text_buffer.len();
+            self.last_assessed_code_pos = self.code_buffer.len();
             // Also clear the code buffer since it has been assessed
-            self.code_buffer.clear();
+            self.code_buffer.clear(); // Reset code buffer and its assessed position
         }
         // If not safe, we keep buffers as is to potentially modify them
     }
@@ -306,19 +332,6 @@ impl StreamBuffer {
     fn buffer_pending_chunk(&mut self, bytes: Bytes) {
         self.pending_buffer.push(bytes);
         self.waiting_for_assessment = true;
-    }
-
-    /// Stores raw bytes in the output buffer without any processing.
-    ///
-    /// This preserves all punctuation and formatting for content that doesn't need
-    /// special handling.
-    ///
-    /// # Arguments
-    ///
-    /// * `bytes` - The raw bytes to store in the output buffer
-    fn buffer_raw_chunk(&mut self, bytes: Bytes) {
-        // Always store the raw bytes to preserve all punctuation and formatting
-        self.output_buffer.push(bytes);
     }
 
     /// Moves content from the pending buffer to the appropriate destination buffer
@@ -431,56 +444,6 @@ impl StreamBuffer {
         // Not returning individual chunks - accumulate until batch is ready
         None
     }
-
-    /// Analyzes and buffers incoming content based on its type.
-    ///
-    /// This method determines whether the incoming bytes contain text, code blocks, or
-    /// other content, and routes them to the appropriate buffer.
-    ///
-    /// # Arguments
-    ///
-    /// * `bytes` - The raw bytes to analyze and buffer
-    fn buffer_content(&mut self, bytes: Bytes) {
-        // Start accumulating content
-        if !self.accumulating {
-            self.accumulating = true;
-        }
-
-        if let Ok(chunk) = std::str::from_utf8(&bytes) {
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(chunk) {
-                if let Some(content) = json["message"]["content"].as_str() {
-                    // If content contains a code block marker, buffer it in code buffer
-                    if content.contains("```") || self.in_code_block {
-                        self.code_buffer_complete.push(bytes);
-                        // Only mark complete if we've reached the end of a code block
-                        if !self.in_code_block && !self.code_buffer.is_empty() {
-                            self.has_complete_code = true;
-                            // Mark batch as ready when we've got a complete code block
-                            self.mark_batch_ready();
-                        }
-                    } else {
-                        // Regular text content
-                        self.text_buffer_complete.push(bytes);
-
-                        // Check if this text chunk is a complete sentence
-                        if content.ends_with(".")
-                            || content.ends_with("!")
-                            || content.ends_with("?")
-                            || content.ends_with("\n")
-                        {
-                            self.has_complete_text = true;
-                            // Mark batch as ready when we've got complete text
-                            self.mark_batch_ready();
-                        }
-                    }
-                    return;
-                }
-            }
-        }
-
-        // If we couldn't determine the content type, add to the main output buffer
-        self.output_buffer.push(bytes);
-    }
 }
 
 #[pin_project]
@@ -528,12 +491,15 @@ fn create_blocked_response(assessment: &Assessment) -> Bytes {
         },
         "done": true
     });
-    
+
     // Convert to bytes
-    Bytes::from(serde_json::to_vec(&blocked_json).unwrap_or_else(|_| 
-        format!("BLOCKED - Category: {}, Action: {}", 
-                assessment.category, assessment.action).into_bytes()
-    ))
+    Bytes::from(serde_json::to_vec(&blocked_json).unwrap_or_else(|_| {
+        format!(
+            "BLOCKED - Category: {}, Action: {}",
+            assessment.category, assessment.action
+        )
+        .into_bytes()
+    }))
 }
 
 /// Creates a future that will perform security assessment on buffered content.
@@ -710,6 +676,9 @@ where
             // Call detect_code_blocks to find and handle code block markers
             buffer.detect_code_blocks();
 
+            // Always buffer the chunk while we determine if assessment is needed
+            buffer.buffer_pending_chunk(bytes);
+
             // Check if we need to trigger an assessment
             if buffer.get_assessable_chunk(is_prompt).is_some() {
                 *assessment_fut = Some(create_security_assessment_future(
@@ -718,27 +687,39 @@ where
                     model_name,
                     is_prompt,
                 ));
-                // Add to pending buffer when we're waiting for assessment
-                buffer.buffer_pending_chunk(bytes);
+                // We're already buffering chunks - set the waiting flag
+                buffer.waiting_for_assessment = true;
                 return None;
             }
 
-            // If we're waiting for assessment, continue buffering chunks until assessment completes
-            if buffer.waiting_for_assessment {
-                buffer.buffer_pending_chunk(bytes);
-            } else {
-                // Use our new buffer_content method to properly separate text and code
-                buffer.buffer_content(bytes);
+            // If we're not waiting for assessment, we should still assess this content
+            // before sending it, so we'll create an assessment future anyway
+            if !buffer.waiting_for_assessment {
+                // Always perform some level of assessment before sending content
+                buffer.waiting_for_assessment = true;
+                *assessment_fut = Some(create_security_assessment_future(
+                    buffer,
+                    security_client,
+                    model_name,
+                    is_prompt,
+                ));
             }
 
             return None;
         }
 
-        // If we couldn't process as UTF-8, add to appropriate buffer based on assessment status
-        if buffer.waiting_for_assessment {
-            buffer.buffer_pending_chunk(bytes);
-        } else {
-            buffer.buffer_raw_chunk(bytes);
+        // If we couldn't process as UTF-8, add to pending buffer to be safe
+        buffer.buffer_pending_chunk(bytes);
+
+        // If we're not waiting for assessment, trigger one anyway for safety
+        if !buffer.waiting_for_assessment {
+            buffer.waiting_for_assessment = true;
+            *assessment_fut = Some(create_security_assessment_future(
+                buffer,
+                security_client,
+                model_name,
+                is_prompt,
+            ));
         }
 
         None
@@ -769,15 +750,40 @@ where
         model_name: &str,
         is_prompt: bool,
     ) -> Option<Result<Bytes, StreamError>> {
-        if let Some(_content) = buffer.get_assessable_chunk(is_prompt) {
+        // Check if there's any new content since the last assessment
+        let new_text_content = buffer.text_buffer.len() > buffer.last_assessed_text_pos;
+        let new_code_content = buffer.code_buffer.len() > buffer.last_assessed_code_pos;
+
+        // Only trigger final assessment if we have new content
+        if new_text_content || new_code_content {
+            // Only log the new portions of text/code that will be assessed
+            if new_text_content {
+                &buffer.text_buffer[buffer.last_assessed_text_pos..]
+            } else {
+                ""
+            };
+
+            if new_code_content {
+                &buffer.code_buffer[buffer.last_assessed_code_pos..]
+            } else {
+                ""
+            };
+
+            // Create assessment future for the new content
             *assessment_fut = Some(create_security_assessment_future(
                 buffer,
                 security_client,
                 model_name,
                 is_prompt,
             ));
+
+            // Update tracking positions to avoid reassessing this content
+            buffer.last_assessed_text_pos = buffer.text_buffer.len();
+            buffer.last_assessed_code_pos = buffer.code_buffer.len();
+
             None
         } else {
+            // No new content to assess
             None
         }
     }

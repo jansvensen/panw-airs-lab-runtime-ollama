@@ -120,15 +120,16 @@ pub fn format_security_violation_message(assessment: &crate::security::Assessmen
     let reasons_text = if reasons.is_empty() {
         "Unspecified security concern".to_string()
     } else {
-        reasons.join("\n• ")
+        reasons.join("\n - ")
     };
 
     format!(
-        "⚠️ This content was blocked due to security policy violations:\n\n\
+        "\n\n⚠️ This content was blocked due to security policy violations:\n\n\
          • Category: {}\n\
          • Action: {}\n\
-         • Reasons: {}\n\n\
-         Please reformulate your request to comply with security policies.",
+         • Reasons: \n\
+          - {}\n\n\
+         Please reformulate your request to comply with security policies.\n\n",
         assessment.category, assessment.action, reasons_text
     )
 }
