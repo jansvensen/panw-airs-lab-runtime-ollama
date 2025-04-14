@@ -50,6 +50,8 @@ struct StreamBuffer {
     batch_ready: bool,            // Flag indicating a batch is ready to send
     accumulating: bool,           // Flag indicating we're accumulating chunks
     blocked: bool,                // Flag indicating content has been blocked
+    last_assessed_text_pos: usize, // Position in text buffer that has already been assessed
+    last_assessed_code_pos: usize, // Position in code buffer that has already been assessed
 }
 
 impl StreamBuffer {
@@ -76,6 +78,8 @@ impl StreamBuffer {
             batch_ready: false,
             accumulating: false,
             blocked: false,
+            last_assessed_text_pos: 0,
+            last_assessed_code_pos: 0,
         }
     }
 
@@ -204,33 +208,43 @@ impl StreamBuffer {
     /// # Returns
     ///
     /// A Content structure with the appropriate fields populated
-    fn prepare_assessment_content(&self, is_prompt: bool) -> Content {
-        // Check if we have code blocks
-        let has_code = !self.code_buffer.is_empty();
+    fn prepare_assessment_content(&mut self, is_prompt: bool) -> Content {
+        // Get only the new (unassessed) portions of the text and code buffers
+        let new_text = if self.text_buffer.len() > self.last_assessed_text_pos {
+            &self.text_buffer[self.last_assessed_text_pos..]
+        } else {
+            ""
+        };
+
+        let new_code = if self.code_buffer.len() > self.last_assessed_code_pos {
+            &self.code_buffer[self.last_assessed_code_pos..]
+        } else {
+            ""
+        };
+
+        let has_new_code = !new_code.is_empty();
+
+        tracing::debug!(
+            "Preparing assessment content - New text: {}, New code: {}",
+            new_text.len(),
+            new_code.len()
+        );
 
         if is_prompt {
             // For prompt content
             Content {
-                prompt: Some(&self.text_buffer),
+                prompt: Some(new_text),
                 response: None,
-                code_prompt: if has_code {
-                    Some(&self.code_buffer)
-                } else {
-                    None
-                },
+                code_prompt: if has_new_code { Some(new_code) } else { None },
                 code_response: None,
             }
         } else {
             // For response content
             Content {
                 prompt: None,
-                response: Some(&self.text_buffer),
+                response: Some(new_text),
                 code_prompt: None,
-                code_response: if has_code {
-                    Some(&self.code_buffer)
-                } else {
-                    None
-                },
+                code_response: if has_new_code { Some(new_code) } else { None },
             }
         }
     }
@@ -248,31 +262,41 @@ impl StreamBuffer {
     ///
     /// Some(Content) if there is assessable content, None otherwise
     fn get_assessable_chunk(&mut self, is_prompt: bool) -> Option<Content> {
-        // Always assess if we've accumulated a large amount of content
-        if self.text_buffer.len() >= self.assessment_window
-            || self.code_buffer.len() >= self.assessment_window
+        let new_text_content = self.text_buffer.len() > self.last_assessed_text_pos;
+        let new_code_content = self.code_buffer.len() > self.last_assessed_code_pos;
+
+        // Check if there is any new content to assess
+        if !new_text_content && !new_code_content {
+            return None;
+        }
+
+        // Always assess if we've accumulated a large amount of new content
+        if (self.text_buffer.len() - self.last_assessed_text_pos) >= self.assessment_window
+            || (self.code_buffer.len() - self.last_assessed_code_pos) >= self.assessment_window
         {
-            tracing::info!("Triggering assessment due to exceeding assessment window size");
+            tracing::debug!("Triggering assessment due to exceeding assessment window size");
             return Some(self.prepare_assessment_content(is_prompt));
         }
 
         // If we've completed a code block, assess it
-        if !self.in_code_block && !self.code_buffer.is_empty() {
-            tracing::info!("Triggering assessment due to completed code block");
+        if !self.in_code_block && new_code_content {
+            tracing::debug!("Triggering assessment due to completed code block");
             return Some(self.prepare_assessment_content(is_prompt));
         }
 
         // Check for semantic boundaries in text
-        if !self.text_buffer.is_empty() {
+        if new_text_content {
             let last_char = self.text_buffer.chars().last().unwrap_or(' ');
             if self.sentence_boundary_chars.contains(&last_char)
                 && self.text_buffer.len() > 15
                 && !self.last_was_boundary
             {
                 self.last_was_boundary = true;
-                tracing::info!(
-                    "Found paragraph boundary, triggering assessment : {:?}",
-                    self.text_buffer
+                // Only log the new portion of text that will be assessed
+                let new_text = &self.text_buffer[self.last_assessed_text_pos..];
+                tracing::debug!(
+                    "Found boundary, triggering assessment for new content: {:?}",
+                    new_text
                 );
                 return Some(self.prepare_assessment_content(is_prompt));
             } else if !self.sentence_boundary_chars.contains(&last_char) {
@@ -295,8 +319,11 @@ impl StreamBuffer {
         // If content is safe, we can reset buffers or handle accordingly
         if is_safe {
             self.read_pos = self.text_buffer.len();
+            self.last_assessed_text_pos = self.text_buffer.len();
+            self.last_assessed_code_pos = self.code_buffer.len();
             // Also clear the code buffer since it has been assessed
             self.code_buffer.clear();
+            self.last_assessed_code_pos = 0; // Reset code position since we cleared the buffer
         }
         // If not safe, we keep buffers as is to potentially modify them
     }
@@ -778,14 +805,30 @@ where
         model_name: &str,
         is_prompt: bool,
     ) -> Option<Result<Bytes, StreamError>> {
-        // Always trigger a final assessment if we have any content, even if it doesn't meet
-        // the usual criteria for assessment
-        if !buffer.text_buffer.is_empty() || !buffer.code_buffer.is_empty() {
-            tracing::info!("Triggering assessment due to end of stream");
-            tracing::info!("Text buffer content: {:?}", buffer.text_buffer);
-            tracing::info!("Code buffer content: {:?}", buffer.code_buffer);
+        // Check if there's any new content since the last assessment
+        let new_text_content = buffer.text_buffer.len() > buffer.last_assessed_text_pos;
+        let new_code_content = buffer.code_buffer.len() > buffer.last_assessed_code_pos;
 
-            // Create the assessment future
+        // Only trigger final assessment if we have new content
+        if new_text_content || new_code_content {
+            // Only log the new portions of text/code that will be assessed
+            let new_text = if new_text_content {
+                &buffer.text_buffer[buffer.last_assessed_text_pos..]
+            } else {
+                ""
+            };
+
+            let new_code = if new_code_content {
+                &buffer.code_buffer[buffer.last_assessed_code_pos..]
+            } else {
+                ""
+            };
+
+            tracing::debug!("Triggering assessment due to end of stream");
+            tracing::debug!("New text content to assess: {:?}", new_text);
+            tracing::debug!("New code content to assess: {:?}", new_code);
+
+            // Create assessment future for the new content
             *assessment_fut = Some(create_security_assessment_future(
                 buffer,
                 security_client,
@@ -793,13 +836,13 @@ where
                 is_prompt,
             ));
 
-            // Clear the buffers immediately after creating the assessment future
-            // to prevent repeated assessments on the same content
-            buffer.text_buffer.clear();
-            buffer.code_buffer.clear();
+            // Update tracking positions to avoid reassessing this content
+            buffer.last_assessed_text_pos = buffer.text_buffer.len();
+            buffer.last_assessed_code_pos = buffer.code_buffer.len();
 
             None
         } else {
+            // No new content to assess
             None
         }
     }
