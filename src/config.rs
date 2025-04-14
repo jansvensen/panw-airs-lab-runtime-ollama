@@ -1,17 +1,18 @@
 /// Configuration loading and management for the application.
 ///
 /// This module handles loading, parsing, and validating configuration settings
-/// from a YAML configuration file. It provides strongly typed access to
+/// from a YAML configuration file or environment variables. It provides strongly typed access to
 /// application settings for server properties, Ollama API integration,
 /// and security services.
 ///
 /// # Configuration Flow
 ///
-/// 1. Load configuration from YAML file
+/// 1. Load configuration from YAML file or environment variables
 /// 2. Parse into structured types
 /// 3. Validate all required settings
 /// 4. Make configuration available to application components
 use serde::Deserialize;
+use std::env;
 use std::fs;
 use std::path::Path;
 use thiserror::Error;
@@ -99,14 +100,56 @@ pub struct SecurityConfig {
     pub app_user: String,
 }
 
-/// Loads configuration from a YAML file.
+/// Loads configuration from environment variables.
 ///
-/// This function reads the configuration file from the specified path,
-/// parses it into a structured Config object, and validates all settings.
+/// This function reads configuration values from environment variables,
+/// falling back to default values where appropriate.
+///
+/// # Returns
+///
+/// * `Config` - Configuration object populated from environment variables
+fn load_from_env() -> Config {
+    info!("Loading configuration from environment variables");
+
+    let server = ServerConfig {
+        host: env::var("SERVER_HOST").unwrap_or_else(|_| "127.0.0.1".to_string()),
+        port: env::var("SERVER_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(11435),
+        debug_level: env::var("SERVER_DEBUG_LEVEL").unwrap_or_else(|_| "INFO".to_string()),
+    };
+
+    let ollama = OllamaConfig {
+        base_url: env::var("OLLAMA_BASE_URL")
+            .unwrap_or_else(|_| "http://localhost:11434".to_string()),
+    };
+
+    let security = SecurityConfig {
+        base_url: env::var("SECURITY_BASE_URL")
+            .unwrap_or_else(|_| "https://service.api.aisecurity.paloaltonetworks.com".to_string()),
+        api_key: env::var("SECURITY_API_KEY").unwrap_or_default(),
+        profile_name: env::var("SECURITY_PROFILE_NAME").unwrap_or_default(),
+        app_name: env::var("SECURITY_APP_NAME").unwrap_or_else(|_| "panw-api-ollama".to_string()),
+        app_user: env::var("SECURITY_APP_USER").unwrap_or_else(|_| "default".to_string()),
+    };
+
+    Config {
+        server,
+        ollama,
+        security,
+    }
+}
+
+/// Loads configuration from a YAML file or environment variables.
+///
+/// This function first attempts to load configuration from the specified file path.
+/// If the file doesn't exist or can't be read, it falls back to using environment variables.
+/// In either case, the resulting configuration is validated before being returned.
 ///
 /// # Arguments
 ///
-/// * `path` - Path to the YAML configuration file
+/// * `path` - Path to the YAML configuration file (optional, will use env vars if file not found)
 ///
 /// # Returns
 ///
@@ -120,29 +163,77 @@ pub struct SecurityConfig {
 /// println!("Server will listen on {}:{}", config.server.host, config.server.port);
 /// ```
 pub fn load_config(path: &str) -> Result<Config, ConfigError> {
-    info!("Loading configuration from {}", path);
-
     // Check if file exists
-    if !Path::new(path).exists() {
-        return Err(ConfigError::IoError(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            format!("Configuration file not found: {}", path),
-        )));
+    if Path::new(path).exists() {
+        info!("Loading configuration from file: {}", path);
+
+        // Read file content
+        let content = fs::read_to_string(path)?;
+        debug!("Successfully read configuration file");
+
+        // Parse YAML
+        let mut config: Config = serde_yaml::from_str(&content)?;
+        debug!("Successfully parsed YAML configuration");
+
+        // Override with environment variables if present
+        override_with_env(&mut config);
+
+        // Validate configuration
+        config.validate()?;
+        info!("Configuration validated successfully");
+
+        Ok(config)
+    } else {
+        info!(
+            "Configuration file not found: {}. Using environment variables.",
+            path
+        );
+        let config = load_from_env();
+        config.validate()?;
+        info!("Configuration from environment variables validated successfully");
+        Ok(config)
+    }
+}
+
+/// Override configuration values with environment variables if present
+fn override_with_env(config: &mut Config) {
+    if let Ok(host) = env::var("SERVER_HOST") {
+        config.server.host = host;
     }
 
-    // Read file content
-    let content = fs::read_to_string(path)?;
-    debug!("Successfully read configuration file");
+    if let Ok(port) = env::var("SERVER_PORT") {
+        if let Ok(port) = port.parse() {
+            config.server.port = port;
+        }
+    }
 
-    // Parse YAML
-    let config: Config = serde_yaml::from_str(&content)?;
-    debug!("Successfully parsed YAML configuration");
+    if let Ok(debug_level) = env::var("SERVER_DEBUG_LEVEL") {
+        config.server.debug_level = debug_level;
+    }
 
-    // Validate configuration
-    config.validate()?;
-    info!("Configuration validated successfully");
+    if let Ok(base_url) = env::var("OLLAMA_BASE_URL") {
+        config.ollama.base_url = base_url;
+    }
 
-    Ok(config)
+    if let Ok(base_url) = env::var("SECURITY_BASE_URL") {
+        config.security.base_url = base_url;
+    }
+
+    if let Ok(api_key) = env::var("SECURITY_API_KEY") {
+        config.security.api_key = api_key;
+    }
+
+    if let Ok(profile_name) = env::var("SECURITY_PROFILE_NAME") {
+        config.security.profile_name = profile_name;
+    }
+
+    if let Ok(app_name) = env::var("SECURITY_APP_NAME") {
+        config.security.app_name = app_name;
+    }
+
+    if let Ok(app_user) = env::var("SECURITY_APP_USER") {
+        config.security.app_user = app_user;
+    }
 }
 
 impl Config {
