@@ -778,14 +778,26 @@ where
         model_name: &str,
         is_prompt: bool,
     ) -> Option<Result<Bytes, StreamError>> {
-        if let Some(_content) = buffer.get_assessable_chunk(is_prompt) {
+        // Always trigger a final assessment if we have any content, even if it doesn't meet
+        // the usual criteria for assessment
+        if !buffer.text_buffer.is_empty() || !buffer.code_buffer.is_empty() {
             tracing::info!("Triggering assessment due to end of stream");
+            tracing::info!("Text buffer content: {:?}", buffer.text_buffer);
+            tracing::info!("Code buffer content: {:?}", buffer.code_buffer);
+
+            // Create the assessment future
             *assessment_fut = Some(create_security_assessment_future(
                 buffer,
                 security_client,
                 model_name,
                 is_prompt,
             ));
+
+            // Clear the buffers immediately after creating the assessment future
+            // to prevent repeated assessments on the same content
+            buffer.text_buffer.clear();
+            buffer.code_buffer.clear();
+
             None
         } else {
             None
