@@ -124,12 +124,12 @@ pub fn format_security_violation_message(assessment: &crate::security::Assessmen
     };
 
     format!(
-        "⚠️ This content was blocked due to security policy violations:\n\n\
+        "\n\n⚠️ This content was blocked due to security policy violations:\n\n\
          • Category: {}\n\
          • Action: {}\n\
          • Reasons: \n\
           - {}\n\n\
-         Please reformulate your request to comply with security policies.",
+         Please reformulate your request to comply with security policies.\n\n",
         assessment.category, assessment.action, reasons_text
     )
 }
