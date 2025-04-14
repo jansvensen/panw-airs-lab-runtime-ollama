@@ -70,7 +70,7 @@ impl StreamBuffer {
             code_buffer_complete: Vec::new(),
             pending_buffer: Vec::new(),
             assessment_window: 100000,
-            sentence_boundary_chars: &['.', '!', '?', '\n'],
+            sentence_boundary_chars: &['\n'],
             last_was_boundary: false,
             waiting_for_assessment: false,
             has_complete_text: false,
@@ -224,12 +224,6 @@ impl StreamBuffer {
 
         let has_new_code = !new_code.is_empty();
 
-        tracing::debug!(
-            "Preparing assessment content - New text: {}, New code: {}",
-            new_text.len(),
-            new_code.len()
-        );
-
         if is_prompt {
             // For prompt content
             Content {
@@ -274,13 +268,11 @@ impl StreamBuffer {
         if (self.text_buffer.len() - self.last_assessed_text_pos) >= self.assessment_window
             || (self.code_buffer.len() - self.last_assessed_code_pos) >= self.assessment_window
         {
-            tracing::debug!("Triggering assessment due to exceeding assessment window size");
             return Some(self.prepare_assessment_content(is_prompt));
         }
 
         // If we've completed a code block, assess it
         if !self.in_code_block && new_code_content {
-            tracing::debug!("Triggering assessment due to completed code block");
             return Some(self.prepare_assessment_content(is_prompt));
         }
 
@@ -292,12 +284,6 @@ impl StreamBuffer {
                 && !self.last_was_boundary
             {
                 self.last_was_boundary = true;
-                // Only log the new portion of text that will be assessed
-                let new_text = &self.text_buffer[self.last_assessed_text_pos..];
-                tracing::debug!(
-                    "Found boundary, triggering assessment for new content: {:?}",
-                    new_text
-                );
                 return Some(self.prepare_assessment_content(is_prompt));
             } else if !self.sentence_boundary_chars.contains(&last_char) {
                 self.last_was_boundary = false;
@@ -339,19 +325,6 @@ impl StreamBuffer {
     fn buffer_pending_chunk(&mut self, bytes: Bytes) {
         self.pending_buffer.push(bytes);
         self.waiting_for_assessment = true;
-    }
-
-    /// Stores raw bytes in the output buffer without any processing.
-    ///
-    /// This preserves all punctuation and formatting for content that doesn't need
-    /// special handling.
-    ///
-    /// # Arguments
-    ///
-    /// * `bytes` - The raw bytes to store in the output buffer
-    fn buffer_raw_chunk(&mut self, bytes: Bytes) {
-        // Always store the raw bytes to preserve all punctuation and formatting
-        self.output_buffer.push(bytes);
     }
 
     /// Moves content from the pending buffer to the appropriate destination buffer
@@ -463,56 +436,6 @@ impl StreamBuffer {
 
         // Not returning individual chunks - accumulate until batch is ready
         None
-    }
-
-    /// Analyzes and buffers incoming content based on its type.
-    ///
-    /// This method determines whether the incoming bytes contain text, code blocks, or
-    /// other content, and routes them to the appropriate buffer.
-    ///
-    /// # Arguments
-    ///
-    /// * `bytes` - The raw bytes to analyze and buffer
-    fn buffer_content(&mut self, bytes: Bytes) {
-        // Start accumulating content
-        if !self.accumulating {
-            self.accumulating = true;
-        }
-
-        if let Ok(chunk) = std::str::from_utf8(&bytes) {
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(chunk) {
-                if let Some(content) = json["message"]["content"].as_str() {
-                    // If content contains a code block marker, buffer it in code buffer
-                    if content.contains("```") || self.in_code_block {
-                        self.code_buffer_complete.push(bytes);
-                        // Only mark complete if we've reached the end of a code block
-                        if !self.in_code_block && !self.code_buffer.is_empty() {
-                            self.has_complete_code = true;
-                            // Mark batch as ready when we've got a complete code block
-                            self.mark_batch_ready();
-                        }
-                    } else {
-                        // Regular text content
-                        self.text_buffer_complete.push(bytes);
-
-                        // Check if this text chunk is a complete sentence
-                        if content.ends_with(".")
-                            || content.ends_with("!")
-                            || content.ends_with("?")
-                            || content.ends_with("\n")
-                        {
-                            self.has_complete_text = true;
-                            // Mark batch as ready when we've got complete text
-                            self.mark_batch_ready();
-                        }
-                    }
-                    return;
-                }
-            }
-        }
-
-        // If we couldn't determine the content type, add to the main output buffer
-        self.output_buffer.push(bytes);
     }
 }
 
@@ -746,6 +669,9 @@ where
             // Call detect_code_blocks to find and handle code block markers
             buffer.detect_code_blocks();
 
+            // Always buffer the chunk while we determine if assessment is needed
+            buffer.buffer_pending_chunk(bytes);
+
             // Check if we need to trigger an assessment
             if buffer.get_assessable_chunk(is_prompt).is_some() {
                 *assessment_fut = Some(create_security_assessment_future(
@@ -754,27 +680,39 @@ where
                     model_name,
                     is_prompt,
                 ));
-                // Add to pending buffer when we're waiting for assessment
-                buffer.buffer_pending_chunk(bytes);
+                // We're already buffering chunks - set the waiting flag
+                buffer.waiting_for_assessment = true;
                 return None;
             }
 
-            // If we're waiting for assessment, continue buffering chunks until assessment completes
-            if buffer.waiting_for_assessment {
-                buffer.buffer_pending_chunk(bytes);
-            } else {
-                // Use our new buffer_content method to properly separate text and code
-                buffer.buffer_content(bytes);
+            // If we're not waiting for assessment, we should still assess this content
+            // before sending it, so we'll create an assessment future anyway
+            if !buffer.waiting_for_assessment {
+                // Always perform some level of assessment before sending content
+                buffer.waiting_for_assessment = true;
+                *assessment_fut = Some(create_security_assessment_future(
+                    buffer,
+                    security_client,
+                    model_name,
+                    is_prompt,
+                ));
             }
 
             return None;
         }
 
-        // If we couldn't process as UTF-8, add to appropriate buffer based on assessment status
-        if buffer.waiting_for_assessment {
-            buffer.buffer_pending_chunk(bytes);
-        } else {
-            buffer.buffer_raw_chunk(bytes);
+        // If we couldn't process as UTF-8, add to pending buffer to be safe
+        buffer.buffer_pending_chunk(bytes);
+
+        // If we're not waiting for assessment, trigger one anyway for safety
+        if !buffer.waiting_for_assessment {
+            buffer.waiting_for_assessment = true;
+            *assessment_fut = Some(create_security_assessment_future(
+                buffer,
+                security_client,
+                model_name,
+                is_prompt,
+            ));
         }
 
         None
@@ -812,21 +750,17 @@ where
         // Only trigger final assessment if we have new content
         if new_text_content || new_code_content {
             // Only log the new portions of text/code that will be assessed
-            let new_text = if new_text_content {
+            if new_text_content {
                 &buffer.text_buffer[buffer.last_assessed_text_pos..]
             } else {
                 ""
             };
 
-            let new_code = if new_code_content {
+            if new_code_content {
                 &buffer.code_buffer[buffer.last_assessed_code_pos..]
             } else {
                 ""
             };
-
-            tracing::debug!("Triggering assessment due to end of stream");
-            tracing::debug!("New text content to assess: {:?}", new_text);
-            tracing::debug!("New code content to assess: {:?}", new_code);
 
             // Create assessment future for the new content
             *assessment_fut = Some(create_security_assessment_future(
