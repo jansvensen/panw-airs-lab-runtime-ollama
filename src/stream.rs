@@ -68,7 +68,7 @@ impl StreamBuffer {
             code_buffer_complete: Vec::new(),
             pending_buffer: Vec::new(),
             assessment_window: 100000,
-            sentence_boundary_chars: &['.', '!', '?', '\n'],
+            sentence_boundary_chars: &['!', '\n'],
             last_was_boundary: false,
             waiting_for_assessment: false,
             has_complete_text: false,
@@ -252,11 +252,13 @@ impl StreamBuffer {
         if self.text_buffer.len() >= self.assessment_window
             || self.code_buffer.len() >= self.assessment_window
         {
+            tracing::info!("Triggering assessment due to exceeding assessment window size");
             return Some(self.prepare_assessment_content(is_prompt));
         }
 
         // If we've completed a code block, assess it
         if !self.in_code_block && !self.code_buffer.is_empty() {
+            tracing::info!("Triggering assessment due to completed code block");
             return Some(self.prepare_assessment_content(is_prompt));
         }
 
@@ -268,6 +270,10 @@ impl StreamBuffer {
                 && !self.last_was_boundary
             {
                 self.last_was_boundary = true;
+                tracing::info!(
+                    "Found paragraph boundary, triggering assessment : {:?}",
+                    self.text_buffer
+                );
                 return Some(self.prepare_assessment_content(is_prompt));
             } else if !self.sentence_boundary_chars.contains(&last_char) {
                 self.last_was_boundary = false;
@@ -773,6 +779,7 @@ where
         is_prompt: bool,
     ) -> Option<Result<Bytes, StreamError>> {
         if let Some(_content) = buffer.get_assessable_chunk(is_prompt) {
+            tracing::info!("Triggering assessment due to end of stream");
             *assessment_fut = Some(create_security_assessment_future(
                 buffer,
                 security_client,
