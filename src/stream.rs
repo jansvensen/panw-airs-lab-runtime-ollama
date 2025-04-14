@@ -264,6 +264,14 @@ impl StreamBuffer {
             return None;
         }
 
+        // Safety check - make sure positions are valid to prevent subtraction overflow
+        if self.text_buffer.len() < self.last_assessed_text_pos {
+            self.last_assessed_text_pos = 0;
+        }
+        if self.code_buffer.len() < self.last_assessed_code_pos {
+            self.last_assessed_code_pos = 0;
+        }
+
         // Always assess if we've accumulated a large amount of new content
         if (self.text_buffer.len() - self.last_assessed_text_pos) >= self.assessment_window
             || (self.code_buffer.len() - self.last_assessed_code_pos) >= self.assessment_window
