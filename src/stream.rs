@@ -68,7 +68,7 @@ impl StreamBuffer {
             code_buffer_complete: Vec::new(),
             pending_buffer: Vec::new(),
             assessment_window: 100000,
-            sentence_boundary_chars: &['!', '\n'],
+            sentence_boundary_chars: &['.', '!', '?', '\n'],
             last_was_boundary: false,
             waiting_for_assessment: false,
             has_complete_text: false,
