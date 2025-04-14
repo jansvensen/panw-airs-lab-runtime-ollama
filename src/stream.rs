@@ -308,8 +308,7 @@ impl StreamBuffer {
             self.last_assessed_text_pos = self.text_buffer.len();
             self.last_assessed_code_pos = self.code_buffer.len();
             // Also clear the code buffer since it has been assessed
-            self.code_buffer.clear();
-            self.last_assessed_code_pos = 0; // Reset code position since we cleared the buffer
+            self.code_buffer.clear(); // Reset code buffer and its assessed position
         }
         // If not safe, we keep buffers as is to potentially modify them
     }
