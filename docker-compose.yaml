@@ -1,0 +1,55 @@
+services:
+  ollama:
+    volumes:
+      - ollama:/root/.ollama
+    container_name: ollama
+    pull_policy: always
+    tty: true
+    restart: unless-stopped
+    image: ollama/ollama:${OLLAMA_DOCKER_TAG-latest}
+    ports:
+      - 11434:11434
+
+  panw-api-ollama:
+    image: ${PANW_API_IMAGE-ghcr.io/paloaltonetworks/panw-api-ollama:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: panw-api-ollama
+    depends_on:
+      - ollama
+    ports:
+      - ${PANW_API_PORT-11435}:11435
+    environment:
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=11435
+      - SERVER_DEBUG_LEVEL=${SERVER_DEBUG_LEVEL-INFO}
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - SECURITY_BASE_URL=${SECURITY_BASE_URL-https://service.api.aisecurity.paloaltonetworks.com}
+      - SECURITY_API_KEY=${SECURITY_API_KEY}
+      - SECURITY_PROFILE_NAME=${SECURITY_PROFILE_NAME}
+      - SECURITY_APP_NAME=${SECURITY_APP_NAME-panw-api-ollama}
+      - SECURITY_APP_USER=${SECURITY_APP_USER-docker}
+      - RUST_LOG=${RUST_LOG-info}
+    restart: unless-stopped
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:${WEBUI_DOCKER_TAG-main}
+    container_name: open-webui
+    volumes:
+      - open-webui:/app/backend/data
+    depends_on:
+      - ollama
+      - panw-api-ollama
+    ports:
+      - ${OPEN_WEBUI_PORT-3000}:8080
+    environment:
+      - 'OLLAMA_BASE_URL=http://panw-api-ollama:11435'
+      - 'WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY-}'
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    restart: unless-stopped
+
+volumes:
+  ollama: {}
+  open-webui: {}
