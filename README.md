@@ -72,24 +72,144 @@ Change the Ollama port in OpenWebUI from 11434 to 11435 by updating your environ
 
 You're all set! You can now use OpenWebUI as normal, but with enterprise security scanning all interactions.
 
-## How it Works
+## Docker Setup
 
-panw-api-ollama acts as a transparent proxy:
+You can easily run this entire stack (Ollama, panw-api-ollama, and OpenWebUI) using Docker Compose:
 
-1. It receives requests from OpenWebUI meant for Ollama
-2. It sends the prompt to Palo Alto Networks AI Runtime Security for analysis
-3. If the prompt passes security checks, it forwards the request to Ollama
-4. It receives Ollama's response and checks it for security issues
-5. It delivers the response back to OpenWebUI
-6. **NEW**: Code blocks are now independently assessed for security vulnerabilities, regardless of whether they appear in prompts or responses
+### Step 1: Configure your environment variables
 
-All this happens with minimal latency impact while providing maximum security.
+Create a `.env` file in the root directory with your configuration:
 
-## Important Note on Response Assessment
+```bash
+# Required for security
+SECURITY_API_KEY=your_panw_api_key_here
+SECURITY_PROFILE_NAME=your_profile_name
 
-| Important Update | Image |
-|-----------------|-------|
-| **Good news!** Version 0.7.0 and above now fully supports streaming inspection. You no longer need to disable streaming in OpenWebUI when using this proxy.<br><br>The security system can now effectively assess responses in real-time as they stream, providing comprehensive security protection without sacrificing the interactive experience of streaming responses.<br><br>Feel free to keep the `Stream Chat Response` option enabled in your OpenWebUI settings for the most responsive experience. | ![file](https://github.com/user-attachments/assets/aef82df4-e58d-4804-bf1b-5a0c9e6d2ff5) |
+# Optional configuration (defaults shown)
+SERVER_HOST=0.0.0.0
+SERVER_PORT=11435
+SERVER_DEBUG_LEVEL=INFO
+OLLAMA_BASE_URL=http://ollama:11434
+SECURITY_BASE_URL=https://service.api.aisecurity.paloaltonetworks.com
+SECURITY_APP_NAME=panw-api-ollama
+SECURITY_APP_USER=docker
+RUST_LOG=info
+
+# OpenWebUI and Ollama settings
+OPEN_WEBUI_PORT=3000
+OLLAMA_DOCKER_TAG=latest
+WEBUI_DOCKER_TAG=main
+```
+
+### Step 2: Start the Docker stack
+
+```bash
+docker-compose up -d
+```
+
+This will start three containers:
+- **ollama**: The Ollama service on port 11434
+- **panw-api-ollama**: The security broker service on port 11435
+- **open-webui**: The UI running on port 3000, connected to your security broker
+
+### Step 3: Access OpenWebUI
+
+Open your browser and navigate to:
+```
+http://localhost:3000
+```
+
+OpenWebUI will automatically connect to your panw-api-ollama broker, which then securely connects to Ollama.
+
+### Environment Variables
+
+You can customize your Docker deployment using these environment variables:
+
+#### Required Environment Variables:
+- `SECURITY_API_KEY`: Your Palo Alto Networks API key
+- `SECURITY_PROFILE_NAME`: Your security profile name
+
+#### Optional Environment Variables:
+- **Server Configuration**:
+  - `SERVER_HOST`: Host to bind the server to (default: 0.0.0.0)
+  - `SERVER_PORT`: Port to listen on (default: 11435)
+  - `SERVER_DEBUG_LEVEL`: Logging level: INFO, DEBUG, ERROR (default: INFO)
+  
+- **Ollama Configuration**:
+  - `OLLAMA_BASE_URL`: URL to connect to Ollama (default: http://ollama:11434)
+  
+- **Security Configuration**:
+  - `SECURITY_BASE_URL`: Base URL for the security API (default: https://service.api.aisecurity.paloaltonetworks.com)
+  - `SECURITY_APP_NAME`: Application name (default: panw-api-ollama)
+  - `SECURITY_APP_USER`: Application user identifier (default: docker)
+  
+- **Docker Image Tags**:
+  - `OLLAMA_DOCKER_TAG`: Specify the Ollama image version (default: latest)
+  - `WEBUI_DOCKER_TAG`: Specify the OpenWebUI image version (default: main)
+  
+- **Port Mappings**:
+  - `OPEN_WEBUI_PORT`: Change the port for OpenWebUI (default: 3000)
+  - `PANW_API_PORT`: Change the port for panw-api-ollama (default: 11435)
+  
+- **Logging**:
+  - `RUST_LOG`: Set the logging level for panw-api-ollama (default: info)
+
+Example with custom settings:
+```bash
+OPEN_WEBUI_PORT=8080 RUST_LOG=debug SECURITY_APP_USER=custom-user docker-compose up -d
+```
+
+## GitHub Container Registry
+
+This project publishes Docker images to the GitHub Container Registry (ghcr.io), making it easy to deploy without building the image yourself.
+
+### Using the Pre-built Image
+
+You can use the pre-built Docker image from GitHub Container Registry in your docker-compose.yaml:
+
+```bash
+# Pull and run using the latest image
+docker-compose up -d
+```
+
+By default, docker-compose will use the latest image from `ghcr.io/paloaltonetworks/panw-api-ollama`. You can specify a different version tag using the `PANW_API_IMAGE` environment variable:
+
+```bash
+# Use a specific version
+PANW_API_IMAGE=ghcr.io/paloaltonetworks/panw-api-ollama:v0.9.0 docker-compose up -d
+
+# Or build from local source instead of using the registry
+PANW_API_IMAGE='' docker-compose up -d
+```
+
+### Container Image Release Tags
+
+The following tags are available for the Docker image:
+
+- `latest`: Points to the most recent release
+- `vX.Y.Z`: Specific version (e.g., `v0.9.0`)
+- `vX.Y`: Minor version release (e.g., `v0.9`)
+- `vX`: Major version release (e.g., `v0`)
+
+### For Contributors: Publishing to GitHub Container Registry
+
+The project uses GitHub Actions to automatically build and publish Docker images to ghcr.io. Images are built and published when:
+
+1. You push to the `main` branch
+2. You create a tag with a version number (e.g., `v0.9.1`)
+3. You manually trigger the "Multi-Platform Docker Build" workflow
+
+To release a new version:
+
+```bash
+# Tag the release
+git tag -a v0.9.1 -m "Release version 0.9.1"
+
+# Push the tag to GitHub
+git push origin v0.9.1
+```
+
+This will trigger the GitHub Actions workflow to build and publish multi-platform Docker images.
 
 ## Resources
 
