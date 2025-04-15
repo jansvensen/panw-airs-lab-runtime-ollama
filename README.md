@@ -230,26 +230,6 @@ The following tags are available for the Docker image:
 - `vX.Y`: Minor version release (e.g., `v0.9`)
 - `vX`: Major version release (e.g., `v0`)
 
-### For Contributors: Publishing to GitHub Container Registry
-
-The project uses GitHub Actions to automatically build and publish Docker images to ghcr.io. Images are built and published when:
-
-1. You push to the `main` branch
-2. You create a tag with a version number (e.g., `v0.9.1`)
-3. You manually trigger the "Multi-Platform Docker Build" workflow
-
-To release a new version:
-
-```bash
-# Tag the release
-git tag -a v0.9.1 -m "Release version 0.9.1"
-
-# Push the tag to GitHub
-git push origin v0.9.1
-```
-
-This will trigger the GitHub Actions workflow to build and publish multi-platform Docker images.
-
 ## Resources
 
 - [Product Information](https://www.paloaltonetworks.com/network-security/ai-runtime-security)
