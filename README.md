@@ -108,9 +108,9 @@ docker-compose up -d
 ```
 
 This will start three containers:
-- **ollama**: The Ollama service on port 11434
-- **panw-api-ollama**: The security broker service on port 11435
-- **open-webui**: The UI running on port 3000, connected to your security broker
+- **ollama**: The Ollama service on port 11434 (internal only, not exposed to host)
+- **panw-api-ollama**: The security broker service on port 11435 (internal only, not exposed to host)
+- **open-webui**: The UI running on port 3000, connected to your security broker and exposed to the host system
 
 ### Platform-Specific Docker Configurations
 
