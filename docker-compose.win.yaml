@@ -7,6 +7,18 @@ services:
     tty: true
     restart: unless-stopped
     image: ollama/ollama:${OLLAMA_DOCKER_TAG-latest}
+    # For Windows with NVIDIA GPU
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [ gpu ]
+    environment:
+      # For NVIDIA GPU on Windows
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
   panw-api-ollama:
     image: ${PANW_API_IMAGE-ghcr.io/paloaltonetworks/panw-api-ollama:latest}

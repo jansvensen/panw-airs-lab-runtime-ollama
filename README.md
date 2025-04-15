@@ -108,9 +108,48 @@ docker-compose up -d
 ```
 
 This will start three containers:
-- **ollama**: The Ollama service on port 11434
-- **panw-api-ollama**: The security broker service on port 11435
-- **open-webui**: The UI running on port 3000, connected to your security broker
+- **ollama**: The Ollama service on port 11434 (internal only, not exposed to host)
+- **panw-api-ollama**: The security broker service on port 11435 (internal only, not exposed to host)
+- **open-webui**: The UI running on port 3000, connected to your security broker and exposed to the host system
+
+### Platform-Specific Docker Configurations
+
+The project includes optimized Docker Compose configurations for different platforms:
+
+#### Standard Configuration (All Platforms)
+```bash
+docker-compose up -d
+```
+
+#### Windows with NVIDIA GPU
+For Windows users with NVIDIA GPUs:
+```bash
+docker-compose -f docker-compose.win.yaml up -d
+```
+
+### Apple Silicon Native Installation
+
+For optimal performance on Apple Silicon Macs (M1/M2/M3/M4), using native Ollama installation is recommended:
+
+#### Step 1: Install Ollama natively
+Download and install Ollama from [ollama.com/download](https://ollama.com/download)
+
+#### Step 2: Start native Ollama
+Launch the Ollama app on your Mac or start it from terminal:
+```bash
+ollama serve
+```
+
+#### Step 3: Run Docker components with native Ollama
+Use the special Docker Compose file that connects to your native Ollama instance:
+```bash
+docker-compose -f docker-compose.apple.yaml up -d
+```
+
+This configuration:
+- Uses your natively installed Ollama with full Apple Silicon hardware acceleration
+- Runs panw-api-ollama and OpenWebUI in containers
+- Connects the containerized components to your native Ollama instance
 
 ### Step 3: Access OpenWebUI
 

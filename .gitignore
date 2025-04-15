@@ -105,3 +105,4 @@ flake.lock
 # Ignoring config.yaml due to it being a user-specific file which contains keys
 # that should not be shared.
 config.yaml
+.env
