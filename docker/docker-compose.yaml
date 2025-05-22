@@ -1,3 +1,5 @@
+name: panw-api-ollama
+
 services:
   ollama:
     volumes:
@@ -7,24 +9,18 @@ services:
     tty: true
     restart: unless-stopped
     image: ollama/ollama:${OLLAMA_DOCKER_TAG-latest}
-    # For Windows with NVIDIA GPU
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [ gpu ]
-    environment:
-      # For NVIDIA GPU on Windows
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    # Pre-download the model on container start
+    command: >
+      sh -c "ollama serve &
+             sleep 5 &&
+             ollama pull llama2-uncensored:latest &&
+             wait"
 
   panw-api-ollama:
     image: ${PANW_API_IMAGE-ghcr.io/paloaltonetworks/panw-api-ollama:latest}
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: ./docker/Dockerfile
     container_name: panw-api-ollama
     depends_on:
       - ollama
@@ -57,6 +53,7 @@ services:
     environment:
       - 'OLLAMA_BASE_URL=http://panw-api-ollama:11435'
       - 'WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY-}'
+      - 'ENABLE_OPENAI_API=${ENABLE_OPENAI_API-false}'
     extra_hosts:
       - host.docker.internal:host-gateway
     restart: unless-stopped
