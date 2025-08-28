@@ -2,7 +2,8 @@ name: Multi-Platform Docker Build
 
 on:
   push:
-    tags: [ 'v*.*.*' ]
+    tags:
+      - 'v*.*.*'
 
 env:
   REGISTRY: ghcr.io
@@ -14,16 +15,23 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
+
+    strategy:
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 #5
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 #3.11.1
 
       - name: Log in to the Container registry
-        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3
+        uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 #3.5.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -31,7 +39,7 @@ jobs:
 
       - name: Extract metadata (tags, labels) for Docker
         id: meta
-        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5
+        uses: docker/metadata-action@c1e51972afc2121e065aed6d45c65596fe445f3f #5.8.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -42,12 +50,19 @@ jobs:
             type=sha
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 #6.18.0
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platform }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          labels: |
+            ${{ steps.meta.outputs.labels }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+          cache-from: |
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache
+            type=gha
+          cache-to: |
+            type=gha,mode=max
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache,mode=max
