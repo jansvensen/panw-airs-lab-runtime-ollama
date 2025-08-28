@@ -7,7 +7,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository | lower }}
+  IMAGE_NAME: ${{ downcase(github.repository) }}
 
 jobs:
   build-and-push:
@@ -41,7 +41,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@c1e51972afc2121e065aed6d45c65596fe445f3f #5.8.0
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME | lower }}
+          images: ${{ env.REGISTRY }}/${{ downcase(env.IMAGE_NAME) }}
           flavor: |
             latest=false
           tags: |
@@ -65,8 +65,8 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
           cache-from: |
-            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME | lower }}:cache
+            type=registry,ref=${{ env.REGISTRY }}/${{ downcase(env.IMAGE_NAME) }}:cache
             type=gha
           cache-to: |
             type=gha,mode=max
-            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME | lower }}:cache,mode=max
+            type=registry,ref=${{ env.REGISTRY }}/${{ downcase(env.IMAGE_NAME) }}:cache,mode=max
