@@ -2,11 +2,11 @@
 
 ![file](https://github.com/user-attachments/assets/b54e6622-97e7-4ef8-8cd7-09dd2c5d89f3)
 
-Enhance your Ollama deployment with enterprise-grade AI security using Palo Alto Networks AI Runtime Security.
+Enhance your Ollama deployment with enterprise-grade AI security using Palo Alto Networks Prisma AIRS AI Runtime API Intercept.
 
 ## What is this?
 
-panw-api-ollama is a security proxy that sits between your [OpenWebUI](https://openwebui.com/) interface and [Ollama](https://ollama.com/) instance. It works by intercepting all prompts and responses, analyzing them with Palo Alto Networks' AI RUNTIME security technology, and protecting your system from:
+panw-api-ollama is a security proxy that sits between your [OpenWebUI](https://openwebui.com/) interface and [Ollama](https://ollama.com/) instance. It works by intercepting all prompts and responses, analyzing them with Palo Alto Networks' Prisma AIRS AI Runtime security technology, and protecting your system from:
 
 - Prompt injection attacks
 - Data exfiltration attempts
@@ -56,7 +56,7 @@ cd panw-api-ollama
 cargo build --release
 ```
 
-### Step 2: Get a Palo Alto Networks API Key
+### Step 2: Get a Palo Alto Networks Prisma AIRS AI Runtime API Intercept Key
 
 Follow [this tutorial](https://docs.paloaltonetworks.com/ai-runtime-security/activation-and-onboarding/ai-runtime-security-api-intercept-overview/onboard-api-runtime-security-api-intercept-in-scm), specifically step 13, to obtain your API key.
 
@@ -68,7 +68,7 @@ Rename `config.yaml.example` to `config.yaml` and update it with your API key:
 cp config.yaml.example config.yaml
 ```
 
-Then edit the file to add your Palo Alto Networks API key:
+Then edit the file to add your Palo Alto Networks Prisma AIRS AI Runtime API Intercept key:
 
 ```yaml
 pan_api:
@@ -150,15 +150,15 @@ Two example model configurations are included to demonstrate before/after compar
 1. `PANW.llama2-uncensored_latest-1747909321539.json` - A model using the security proxy
 2. `NOPAWN.llama2-uncensored_latest-1747909327080.json` - The same model bypassing the security proxy
 
-These configurations allow you to perform side-by-side comparisons and demonstrations of how the Palo Alto Networks AI Runtime Security affects the model responses.
+These configurations allow you to perform side-by-side comparisons and demonstrations of how the Palo Alto Networks Prisma AIRS AI Runtime Security affects the model responses.
 
 ## Resources
 
-- [Product Information](https://www.paloaltonetworks.com/network-security/ai-runtime-security)
+- [Product Information](https://www.paloaltonetworks.com/prisma/prisma-ai-runtime-security)
 - [Documentation](https://docs.paloaltonetworks.com/ai-runtime-security)
-- [API Reference](https://pan.dev/ai-runtime-security/scan/api/)
+- [API Reference](https://pan.dev/prisma-airs/scan/api/)
 
 ## Support
 
 For issues related to this integration, please file an issue on GitHub.
-For questions about Palo Alto Networks AI Runtime Security, please refer to official support channels.
+For questions about Palo Alto Networks Prisma AIRS AI Runtime API Intercept, please refer to official support channels.
