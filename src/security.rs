@@ -32,7 +32,10 @@
 //     // Handle unsafe content
 // }
 // ```
-use crate::types::{AiProfile, Content, Metadata, ScanRequest, ScanResponse};
+use crate::{
+    config::SecurityConfig,
+    types::{AiProfile, Content, Metadata, ScanRequest, ScanResponse},
+};
 use reqwest::Client;
 use std::time::Instant;
 use thiserror::Error;
@@ -49,9 +52,37 @@ pub enum SecurityError {
     #[error("HTTP request failed: {0}")]
     RequestError(#[from] reqwest::Error),
 
-    // Errors from the PANW AI Runtime API security service
-    #[error("PANW security assessment error: {0}")]
-    AssessmentError(String),
+    // Bad Request - Request data is invalid or malformed
+    #[error("Bad Request - {0}")]
+    BadRequest(String),
+
+    // Authentication failed
+    #[error("Authentication failed - Not authenticated")]
+    Unauthenticated,
+
+    // Invalid API Key or insufficient permissions
+    #[error("Forbidden - Invalid API key or insufficient permissions")]
+    Forbidden,
+
+    // Requested resource not found
+    #[error("Not Found - Resource not found")]
+    NotFound,
+
+    // HTTP method not allowed for this endpoint
+    #[error("Method Not Allowed - The method is not allowed for this endpoint")]
+    MethodNotAllowed,
+
+    // Request payload too large
+    #[error("Request Too Large - The request payload exceeds size limits")]
+    RequestTooLarge,
+
+    // Unsupported content type
+    #[error("Unsupported Media Type - The content type is not supported")]
+    UnsupportedMediaType,
+
+    // Rate limit exceeded
+    #[error("Too Many Requests - Rate limit exceeded. Retry after {0} {1}")]
+    TooManyRequests(u32, String), // retry interval and unit (e.g., "5", "minute")
 
     // JSON parsing errors when handling API responses
     #[error("JSON parsing error: {0}")]
@@ -60,6 +91,10 @@ pub enum SecurityError {
     // Content that has been blocked by security policy
     #[error("Content blocked by PANW AI security policy: {0}")]
     BlockedContent(String),
+
+    // Generic assessment error for other cases
+    #[error("PANW security assessment error: {0}")]
+    AssessmentError(String),
 }
 
 // Represents the result of a security assessment from PANW AI Runtime API.
@@ -76,6 +111,12 @@ pub struct Assessment {
 
     // Recommended action to take ("allow", "block", etc.)
     pub action: String,
+
+    // The final content to use (original or masked version)
+    pub final_content: String,
+
+    // Whether the final_content is a masked version
+    pub is_masked: bool,
 
     // Complete findings from the PANW AI security scan
     pub details: ScanResponse,
@@ -104,6 +145,12 @@ pub struct SecurityClient {
 
     // Application user identifier
     app_user: String,
+
+    // IP address of the end user (optional)
+    user_ip: Option<String>,
+
+    // Default context for grounding LLM responses. When not empty, grounding is enabled
+    contextual_grounding_context: String,
 }
 
 impl Content {
@@ -120,6 +167,7 @@ impl Content {
     // * `response` - Optional text representing a response from an AI model
     // * `code_prompt` - Extracted code from prompt
     // * `code_response` - Extracted code from response
+    // * `context` - Contextual grounding information
     //
     // # Returns
     //
@@ -130,6 +178,7 @@ impl Content {
         response: Option<String>,
         code_prompt: Option<String>,
         code_response: Option<String>,
+        context: Option<String>,
     ) -> Result<Self, &'static str> {
         if prompt.is_none()
             && response.is_none()
@@ -143,6 +192,7 @@ impl Content {
             response,
             code_prompt,
             code_response,
+            context,
         })
     }
 }
@@ -154,6 +204,7 @@ pub struct ContentBuilder {
     response: Option<String>,
     code_prompt: Option<String>,
     code_response: Option<String>,
+    context: Option<String>,
 }
 
 impl ContentBuilder {
@@ -181,6 +232,11 @@ impl ContentBuilder {
         self
     }
 
+    pub fn with_context(mut self, context: String) -> Self {
+        self.context = Some(context);
+        self
+    }
+
     // Builds the Content from the configured components.
     //
     // # Errors
@@ -192,6 +248,7 @@ impl ContentBuilder {
             self.response,
             self.code_prompt,
             self.code_response,
+            self.context,
         )
     }
 }
@@ -210,26 +267,32 @@ impl SecurityClient {
     // * `profile_name` - Name of the AI security profile to use for assessments
     // * `app_name` - Name of the application using this security client
     // * `app_user` - Identifier for the user or context within the application
-    pub fn new(
-        base_url: &str,
-        api_key: &str,
-        profile_name: &str,
-        app_name: &str,
-        app_user: &str,
-    ) -> Self {
+    pub fn new(config: &SecurityConfig) -> Self {
         Self {
             client: Client::new(),
-            base_url: base_url.to_string(),
-            api_key: api_key.to_string(),
-            profile_name: profile_name.to_string(),
-            app_name: app_name.to_string(),
-            app_user: app_user.to_string(),
+            base_url: config.base_url.clone(),
+            api_key: config.api_key.clone(),
+            profile_name: config.profile_name.clone(),
+            app_name: config.app_name.clone(),
+            app_user: config.app_user.clone(),
+            contextual_grounding_context: config.contextual_grounding.clone(),
+            user_ip: None,
         }
     }
 
     //--------------------------------------------------------------------------
     // Public API Methods
     //--------------------------------------------------------------------------
+
+    /// Sets the user IP address for subsequent security assessments
+    ///
+    /// # Arguments
+    ///
+    /// * `ip` - The IP address of the end user making the request
+    pub fn with_user_ip(&mut self, ip: impl Into<String>) -> &mut Self {
+        self.user_ip = Some(ip.into());
+        self
+    }
 
     // Performs a security assessment on the provided content using PANW AI Runtime API.
     //
@@ -277,14 +340,24 @@ impl SecurityClient {
         match &result {
             Ok(assessment) => {
                 if assessment.is_safe {
-                    info!(
-                        "Security assessment completed in {} ms - {} passed security assessment",
-                        elapsed_time.as_millis(),
-                        content_type
-                    );
+                    if assessment.is_masked {
+                        info!(
+                            "Security assessment completed in {} ms - {} allowed with masked content: category={}",
+                            elapsed_time.as_millis(),
+                            content_type,
+                            assessment.category
+                        );
+                    } else {
+                        info!(
+                            "Security assessment completed in {} ms - {} allowed without masking: category={}",
+                            elapsed_time.as_millis(),
+                            content_type,
+                            assessment.category
+                        );
+                    }
                 } else {
                     warn!(
-                        "Security assessment completed in {} ms - {} failed security assessment: category={}, action={}",
+                        "Security assessment completed in {} ms - {} blocked: category={}, action={}",
                         elapsed_time.as_millis(), content_type, assessment.category, assessment.action
                     );
                 }
@@ -347,11 +420,6 @@ impl SecurityClient {
                 .map_err(|e| SecurityError::AssessmentError(e.to_string()))?
         };
 
-        debug!(
-            "Prepared content with code for PANW assessment: {:#?}",
-            content_obj
-        );
-
         // Create and send the request payload
         let payload = self.create_scan_request(content_obj, model_name);
         let scan_result = self.send_security_request(&payload).await?;
@@ -400,6 +468,8 @@ impl SecurityClient {
             is_safe: true,
             category: "benign".to_string(),
             action: "allow".to_string(),
+            final_content: String::new(),
+            is_masked: false,
             details: ScanResponse::default_safe_response(),
         }
     }
@@ -487,16 +557,23 @@ impl SecurityClient {
         // Use the builder pattern for creating content objects
         let builder = Content::builder();
 
-        let content_builder = if is_prompt {
-            let mut builder = builder.with_prompt(text_content);
-            if has_code {
-                builder = builder.with_code_prompt(code_blocks);
-            }
-            builder
-        } else {
-            let mut builder = builder.with_response(text_content);
-            if has_code {
-                builder = builder.with_code_response(code_blocks);
+        let content_builder = {
+            let mut builder = if is_prompt {
+                let mut b = builder.with_prompt(text_content);
+                if has_code {
+                    b = b.with_code_prompt(code_blocks);
+                }
+                b
+            } else {
+                let mut b = builder.with_response(text_content);
+                if has_code {
+                    b = b.with_code_response(code_blocks);
+                }
+                b
+            };
+
+            if !self.contextual_grounding_context.is_empty() {
+                builder = builder.with_context(self.contextual_grounding_context.clone());
             }
             builder
         };
@@ -552,12 +629,34 @@ impl SecurityClient {
     //
     // Assessment object with security evaluation results
     fn process_scan_result(&self, scan_result: ScanResponse) -> Result<Assessment, SecurityError> {
-        let is_safe = scan_result.category == "benign" && scan_result.action != "block";
+        // Content is considered safe unless explicitly blocked
+        let is_safe = scan_result.action != "block";
+
+        // Determine if we have masked content to use - only apply masking for non-blocked content
+        let (final_content, is_masked) = if is_safe {
+            if scan_result.prompt_detected.dlp && !scan_result.prompt_masked_data.data.is_empty() {
+                // Use masked prompt content
+                (scan_result.prompt_masked_data.data.clone(), true)
+            } else if scan_result.response_detected.dlp
+                && !scan_result.response_masked_data.data.is_empty()
+            {
+                // Use masked response content
+                (scan_result.response_masked_data.data.clone(), true)
+            } else {
+                // Not masked, don't provide final_content as we'll keep using the original content
+                (String::new(), false)
+            }
+        } else {
+            // For blocked content, don't provide final_content
+            (String::new(), false)
+        };
 
         let assessment = Assessment {
             is_safe,
             category: scan_result.category.clone(),
             action: scan_result.action.clone(),
+            final_content,
+            is_masked,
             details: scan_result,
         };
 
@@ -584,6 +683,7 @@ impl SecurityClient {
                 app_name: self.app_name.to_string(),
                 app_user: self.app_user.to_string(),
                 ai_model: model_name.to_string(),
+                user_ip: self.user_ip.clone(),
             },
             contents: vec![content_obj],
         }
@@ -663,13 +763,52 @@ impl SecurityClient {
         debug!("PANW API response status: {}", status);
         debug!("Raw PANW response body:\n{}", body_text);
 
-        // Handle error status codes
+        // Handle error status codes based on OpenAPI specification
         if !status.is_success() {
             error!("PANW security assessment error: {} - {}", status, body_text);
-            return Err(SecurityError::AssessmentError(format!(
-                "Status {}: {}",
-                status, body_text
-            )));
+
+            // Parse error response if possible
+            let error_details = match serde_json::from_str::<serde_json::Value>(&body_text) {
+                Ok(v) => v
+                    .pointer("/error/message")
+                    .and_then(|m| m.as_str())
+                    .map(String::from)
+                    .unwrap_or_else(|| body_text.clone()),
+                Err(_) => body_text.clone(),
+            };
+
+            return match status.as_u16() {
+                400 => Err(SecurityError::BadRequest(error_details)),
+                401 => Err(SecurityError::Unauthenticated),
+                403 => Err(SecurityError::Forbidden),
+                404 => Err(SecurityError::NotFound),
+                405 => Err(SecurityError::MethodNotAllowed),
+                413 => Err(SecurityError::RequestTooLarge),
+                415 => Err(SecurityError::UnsupportedMediaType),
+                429 => {
+                    // Try to parse retry information
+                    let retry_after = serde_json::from_str::<serde_json::Value>(&body_text)
+                        .ok()
+                        .and_then(|v| {
+                            v.pointer("/error/retry_after").and_then(|r| {
+                                let interval = r.get("interval")?.as_u64()? as u32;
+                                let unit = r.get("unit")?.as_str()?;
+                                Some((interval, unit.to_string()))
+                            })
+                        });
+
+                    if let Some((interval, unit)) = retry_after {
+                        Err(SecurityError::TooManyRequests(interval, unit))
+                    } else {
+                        Err(SecurityError::TooManyRequests(60, "second".to_string()))
+                        // Default retry after 60 seconds if not specified
+                    }
+                }
+                _ => Err(SecurityError::AssessmentError(format!(
+                    "Status {}: {}",
+                    status, error_details
+                ))),
+            };
         }
 
         // Parse JSON response

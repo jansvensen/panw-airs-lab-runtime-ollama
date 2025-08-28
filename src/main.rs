@@ -207,13 +207,8 @@ fn build_app_state(config: &config::Config) -> Result<AppState, Box<dyn std::err
     );
 
     // Create security client
-    let security_client = SecurityClient::new(
-        &config.security.base_url,
-        &config.security.api_key,
-        &config.security.profile_name,
-        &config.security.app_name,
-        &config.security.app_user,
-    );
+    let security_client = SecurityClient::new(&config.security);
+
     info!(
         "Created security client with base URL: {}",
         config.security.base_url
@@ -294,7 +289,11 @@ async fn start_server(
     info!("Server started successfully on {}", addr);
 
     info!("Waiting for incoming connections...");
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
