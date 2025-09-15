@@ -1,4 +1,4 @@
-name: panw-api-ollama
+# name: panw-api-ollama
 
 services:
   ollama:
