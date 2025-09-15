@@ -4,17 +4,14 @@ services:
   ollama:
     volumes:
       - ollama:/root/.ollama
+      - ./ollama-entrypoint.sh:/ollama-entrypoint.sh
     container_name: ollama
     pull_policy: always
     tty: true
     restart: unless-stopped
     image: ollama/ollama:latest
     # Pre-download the model on container start
-    command: >
-      sh -c "ollama serve &
-             sleep 5 &&
-             ollama pull llama2-uncensored:latest &&
-             wait"
+    entrypoint: ["/ollama-entrypoint.sh"]
 
   panw-api-ollama:
     image: ghcr.io/paloaltonetworks/panw-api-ollama:latest
