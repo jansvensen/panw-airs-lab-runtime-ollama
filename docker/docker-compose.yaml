@@ -8,7 +8,7 @@ services:
     pull_policy: always
     tty: true
     restart: unless-stopped
-    image: ollama/ollama:${OLLAMA_DOCKER_TAG-latest}
+    image: ollama/ollama:latest
     # Pre-download the model on container start
     command: >
       sh -c "ollama serve &
