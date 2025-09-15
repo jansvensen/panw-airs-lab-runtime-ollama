@@ -17,7 +17,7 @@ services:
              wait"
 
   panw-api-ollama:
-    image: ${PANW_API_IMAGE-ghcr.io/paloaltonetworks/panw-api-ollama:latest}
+    image: ghcr.io/paloaltonetworks/panw-api-ollama:latest
     build:
       context: ..
       dockerfile: ./docker/Dockerfile
