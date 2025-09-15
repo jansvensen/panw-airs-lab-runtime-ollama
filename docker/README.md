@@ -2,17 +2,9 @@
 
 ## Prerequisites
 
-### Install Docker Desktop (Recommended)
+### Install Docker
 
-We strongly recommend installing Docker Desktop as it provides:
-- A user-friendly interface to manage containers
-- Easy access to container logs through the UI
-- Built-in container monitoring and management
-- Simplified volume and network management
-
-Download and install [Docker Desktop](https://www.docker.com/products/docker-desktop) for your platform (Windows, Mac, or Linux).
-
-Alternative: If you prefer not to use Docker Desktop, you can install the Docker Engine directly, but you'll need to use command-line tools to manage containers and view logs.
+I use docker CLI on Ubuntu for this project. Chose whatever you prefer.
 
 ## Components
 
@@ -26,8 +18,6 @@ This folder contains all Docker-related files for running the panw-api-ollama st
 | Configuration | Docker File | Description | Best For |
 |---------------|------------|-------------|----------|
 | Standard | `docker-compose.yaml` | All components (Ollama, panw-api-ollama, OpenWebUI) run in containers | Most platforms, simple setup |
-| Windows with NVIDIA GPU | `docker-compose.win.yaml` | Same as standard but with NVIDIA GPU support for Ollama | Windows machines with NVIDIA GPU |
-| Apple Silicon (Native) | `docker-compose.apple.yaml` | Ollama runs natively on macOS, other components in containers | Apple Silicon Macs (M1/M2/M3), best performance |
 
 ## Quick Start
 
@@ -37,7 +27,8 @@ Copy the required configuration files within the docker folder:
 
 ```bash
 # Copy environment variables file (required)
-cp ../.env.example ./.env
+cd docker
+cp .env.example ./.env
 ```
 
 ### Step 2: Configure your environment variables
@@ -68,10 +59,6 @@ CUSTOM_CONFIG_PATH=./custom-config.json  # Path to your OpenWebUI config
 
 ### Step 3: Start the Docker stack
 
-Choose one of the following deployment options based on your platform:
-
-#### Standard Deployment (All Platforms)
-
 ```bash
 cd docker
 docker-compose up -d
@@ -82,48 +69,6 @@ This will start three containers:
   - Automatically downloads the llama2-uncensored:latest model on startup
 - **panw-api-ollama**: The security broker service on port 11435 (internal only, not exposed to host)
 - **open-webui**: The UI running on port 3000, connected to your security broker and exposed to the host system
-
-#### Windows with NVIDIA GPU
-
-For Windows users with NVIDIA GPUs, use the special Windows configuration file:
-
-```bash
-cd docker
-docker-compose -f docker-compose.win.yaml up -d
-```
-
-This configuration includes NVIDIA GPU support for Ollama, enabling hardware acceleration.
-
-#### Apple Silicon Native Installation (Recommended for M1/M2/M3 Macs)
-
-For optimal performance on Apple Silicon Macs, a hybrid approach is recommended where:
-- Ollama runs natively on macOS (not in Docker)
-- panw-api-ollama and OpenWebUI run in containers
-
-Follow these steps:
-
-1. Install Ollama natively on your Mac:
-   - Download and install from [ollama.com/download](https://ollama.com/download)
-
-2. Start the native Ollama service and pull the model:
-   ```bash
-   # Start Ollama service in one terminal
-   ollama serve
-
-   # In a new terminal, pull the necessary model
-   ollama pull llama2-uncensored:latest
-   ```
-
-3. Launch the Docker containers that will connect to your native Ollama:
-   ```bash
-   cd docker
-   docker-compose -f docker-compose.apple.yaml up -d
-   ```
-
-This hybrid setup provides:
-- Full hardware acceleration for Ollama on Apple Silicon
-- The security and containerization benefits for the other components
-- Better overall performance than running everything in containers
 
 ## Understanding Docker Compose Configurations
 
@@ -142,31 +87,6 @@ This setup is ideal for:
 - Linux, macOS (Intel), and Windows without GPU
 - Testing and development environments
 - Production deployments on standard servers
-
-### docker-compose.win.yaml (Windows with NVIDIA GPU)
-
-Identical to the standard setup but adds NVIDIA GPU support for Ollama:
-- Includes NVIDIA container runtime configurations
-- Sets up GPU-related environment variables
-- Makes the GPU available to the Ollama container
-- All containers use the same networking as the standard setup
-
-This configuration is essential for Windows users with NVIDIA GPUs who want hardware acceleration for their models.
-
-### docker-compose.apple.yaml (Apple Silicon Hybrid)
-
-A specialized configuration for Apple Silicon Macs that:
-- **Does NOT include the Ollama container** - you run Ollama natively on macOS instead
-- Configures panw-api-ollama to connect to your native Ollama via `host.docker.internal:11434`
-- Runs panw-api-ollama and OpenWebUI in ARM64 containers for native performance
-- Uses special host mapping to allow container-to-host communication
-
-This hybrid approach provides significantly better performance than running Ollama in a container on Apple Silicon because:
-1. Ollama can directly access Apple's Neural Engine and GPU
-2. There's no virtualization overhead for the compute-intensive model inference
-3. Native ARM64 execution is optimized for the hardware
-
-**Important note:** When using this configuration, you must keep your native Ollama service running on your Mac as a prerequisite.
 
 ## Access OpenWebUI
 

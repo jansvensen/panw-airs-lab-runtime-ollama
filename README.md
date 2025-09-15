@@ -1,4 +1,4 @@
-# Discalimer: This is a fork of 'https://github.com/PaloAltoNetworks/panw-api-ollama/fork' by the great 'https://github.com/lenoxys'. I adjusted it to fit my LAB a bit better (e.g. I'm using Docker CLI on Linux, instead of Docker Desktop). 
+### Discalimer: This is a fork of 'https://github.com/PaloAltoNetworks/panw-api-ollama/fork' by the great 'https://github.com/lenoxys'. I adjusted it to fit my LAB a bit better (e.g. I'm using Docker CLI on Linux, instead of Docker Desktop). 
 
 # panw-api-ollama
 
@@ -32,11 +32,7 @@ The best part? It's completely transparent to your existing setup - [Ollama](htt
 - **Protect adversarial input**: Safeguard AI agents from malicious inputs and outputs while maintaining workflow flexibility.
 - **Prevent sensitive data leakage**: Use API-based threat detection to block sensitive data leaks during AI interactions.
 
-## Installation Options
-
-There are two ways to install and run panw-api-ollama:
-
-### Option 1: Docker Setup (Recommended)
+## Setup using Docker
 
 Docker is the recommended installation method as it:
 - Handles all permissions automatically
@@ -45,64 +41,6 @@ Docker is the recommended installation method as it:
 - Makes updates and maintenance easier
 
 For Docker-based deployment, please refer to the instructions in the [Docker Setup README](docker/README.md).
-
-### Option 2: Build from Source
-
-If you prefer to build from source or can't use Docker, you can build the Rust application directly. Note that this method may require additional system configuration and could face permission issues depending on your setup.
-
-#### Step 1: Build
-
-```
-git clone https://github.com/PaloAltoNetworks/panw-api-ollama.git
-cd panw-api-ollama
-cargo build --release
-```
-
-### Step 2: Get a Palo Alto Networks Prisma AIRS AI Runtime API Intercept Key
-
-Follow [this tutorial](https://docs.paloaltonetworks.com/ai-runtime-security/activation-and-onboarding/ai-runtime-security-api-intercept-overview/onboard-api-runtime-security-api-intercept-in-scm), specifically step 13, to obtain your API key.
-
-### Step 3: Configure
-
-Rename `config.yaml.example` to `config.yaml` and update it with your API key:
-
-```
-cp config.yaml.example config.yaml
-```
-
-Then edit the file to add your Palo Alto Networks Prisma AIRS AI Runtime API Intercept key:
-
-```yaml
-pan_api:
-  key: "your-pan-api-key-here"
-```
-
-### Step 4: Update OpenWebUI
-
-For non-Docker installations, you need to change the Ollama port in OpenWebUI from 11434 to 11435:
-
-1. Go to Settings > Server Management in the OpenWebUI interface
-2. Add a new Ollama server with URL: `http://localhost:11435` 
-3. Save your configuration
-
-Alternatively, update your OpenWebUI environment settings:
-[OpenWebUI Environment Configuration](https://docs.openwebui.com/getting-started/env-configuration#ollama_base_urls)
-
-### Step 5: Download a model
-
-Before using the service, make sure you have a model available:
-
-```bash
-ollama pull llama2-uncensored:latest
-```
-
-### Step 6: Run
-
-```bash
-./target/release/panw-api-ollama
-```
-
-You're all set! You can now use OpenWebUI as normal, but with enterprise security scanning all interactions.
 
 ## Configuration Examples
 
