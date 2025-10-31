@@ -1,4 +1,4 @@
-### Discalimer: This is a fork of 'https://github.com/PaloAltoNetworks/panw-api-ollama/fork' by the great 'https://github.com/lenoxys'. I adjusted it to fit my LAB a bit better (e.g. I'm using Docker CLI on Linux, instead of Docker Desktop). 
+### Discalimer: This is a fork of 'https://github.com/PaloAltoNetworks/panw-api-ollama/' by the great 'https://github.com/lenoxys'. I adjusted it to fit my LAB a bit better (e.g. I'm using Docker CLI on Linux, instead of Docker Desktop). 
 
 # panw-api-ollama
 
