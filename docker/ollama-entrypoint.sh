@@ -10,7 +10,7 @@ sleep 5
 
 echo "Retrieving model..."
 # ollama pull llama2-uncensored:latest
-ollama pull llama3.2:1b:latest
+ollama pull llama3.2:1b
 echo "Done."
 
 # Wait for Ollama process to finish.
