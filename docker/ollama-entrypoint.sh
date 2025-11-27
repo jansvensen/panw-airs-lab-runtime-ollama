@@ -9,8 +9,7 @@ pid=$!
 sleep 5
 
 echo "Retrieving model..."
-# ollama pull llama2-uncensored:latest
-ollama pull llama3.2:1b
+ollama pull llama2-uncensored:latest
 echo "Done."
 
 # Wait for Ollama process to finish.
